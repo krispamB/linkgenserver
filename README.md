@@ -1,98 +1,175 @@
-<p align="center">
-  <a href="http://nestjs.com/" target="blank"><img src="https://nestjs.com/img/logo-small.svg" width="120" alt="Nest Logo" /></a>
-</p>
+# linkgenserver
 
-[circleci-image]: https://img.shields.io/circleci/build/github/nestjs/nest/master?token=abc123def456
-[circleci-url]: https://circleci.com/gh/nestjs/nest
+An open-source NestJS backend that generates and schedules LinkedIn posts using AI. It runs as two separate processes — an HTTP API server and a background worker — and integrates with LinkedIn OAuth, Google OAuth, OpenRouter LLM, and Paddle for payments.
 
-  <p align="center">A progressive <a href="http://nodejs.org" target="_blank">Node.js</a> framework for building efficient and scalable server-side applications.</p>
-    <p align="center">
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/v/@nestjs/core.svg" alt="NPM Version" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/l/@nestjs/core.svg" alt="Package License" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/dm/@nestjs/common.svg" alt="NPM Downloads" /></a>
-<a href="https://circleci.com/gh/nestjs/nest" target="_blank"><img src="https://img.shields.io/circleci/build/github/nestjs/nest/master" alt="CircleCI" /></a>
-<a href="https://discord.gg/G7Qnnhy" target="_blank"><img src="https://img.shields.io/badge/discord-online-brightgreen.svg" alt="Discord"/></a>
-<a href="https://opencollective.com/nest#backer" target="_blank"><img src="https://opencollective.com/nest/backers/badge.svg" alt="Backers on Open Collective" /></a>
-<a href="https://opencollective.com/nest#sponsor" target="_blank"><img src="https://opencollective.com/nest/sponsors/badge.svg" alt="Sponsors on Open Collective" /></a>
-  <a href="https://paypal.me/kamilmysliwiec" target="_blank"><img src="https://img.shields.io/badge/Donate-PayPal-ff3f59.svg" alt="Donate us"/></a>
-    <a href="https://opencollective.com/nest#sponsor"  target="_blank"><img src="https://img.shields.io/badge/Support%20us-Open%20Collective-41B883.svg" alt="Support us"></a>
-  <a href="https://twitter.com/nestframework" target="_blank"><img src="https://img.shields.io/twitter/follow/nestframework.svg?style=social&label=Follow" alt="Follow us on Twitter"></a>
-</p>
-  <!--[![Backers on Open Collective](https://opencollective.com/nest/backers/badge.svg)](https://opencollective.com/nest#backer)
-  [![Sponsors on Open Collective](https://opencollective.com/nest/sponsors/badge.svg)](https://opencollective.com/nest#sponsor)-->
+## Features
 
-## Description
+- **AI post generation** — pipeline-based workflow engine that calls an LLM (via OpenRouter) to draft LinkedIn posts
+- **Post scheduling** — queue-backed scheduler that publishes posts to LinkedIn at a chosen time
+- **LinkedIn & Google OAuth** — connect LinkedIn person/organisation accounts; sign in with Google
+- **Feature gating** — tier-based limits on AI drafts, scheduled posts, and connected accounts, with usage metering
+- **Background worker** — separate BullMQ worker process handles post generation, scheduling, LinkedIn avatar refresh, and transactional email
+- **Payments** — Paddle webhook integration for subscription management
 
-[Nest](https://github.com/nestjs/nest) framework TypeScript starter repository.
+## Tech stack
 
-## Project setup
+| Concern | Technology |
+|---|---|
+| Framework | NestJS v11 |
+| Database | MongoDB (Mongoose) |
+| Queue / cache | Redis + BullMQ |
+| LLM | OpenRouter |
+| Web research | Apify |
+| Email | Resend |
+| Payments | Paddle |
+| Auth | Passport (Google OAuth2, LinkedIn OAuth2, JWT cookies) |
 
-```bash
-$ npm install
-```
+## Prerequisites
 
-## Compile and run the project
+- Node.js 20+
+- Docker & Docker Compose (for local MongoDB, Redis, and the BullMQ dashboard)
 
-```bash
-# development
-$ npm run start
+## Getting started
 
-# watch mode
-$ npm run start:dev
-
-# production mode
-$ npm run start:prod
-```
-
-## Run tests
+### 1. Clone and install
 
 ```bash
-# unit tests
-$ npm run test
-
-# e2e tests
-$ npm run test:e2e
-
-# test coverage
-$ npm run test:cov
+git clone https://github.com/krispamb/linkgenserver.git
+cd linkgenserver
+npm install
 ```
 
-## Deployment
-
-When you're ready to deploy your NestJS application to production, there are some key steps you can take to ensure it runs as efficiently as possible. Check out the [deployment documentation](https://docs.nestjs.com/deployment) for more information.
-
-If you are looking for a cloud-based platform to deploy your NestJS application, check out [Mau](https://mau.nestjs.com), our official platform for deploying NestJS applications on AWS. Mau makes deployment straightforward and fast, requiring just a few simple steps:
+### 2. Start infrastructure
 
 ```bash
-$ npm install -g @nestjs/mau
-$ mau deploy
+docker-compose up -d
 ```
 
-With Mau, you can deploy your application in just a few clicks, allowing you to focus on building features rather than managing infrastructure.
+This starts:
+- **MongoDB** on `localhost:27017`
+- **Redis** on `localhost:6379` (password: `securelinkgenpass`)
+- **BullMQ dashboard** on `http://localhost:8080`
 
-## Resources
+### 3. Configure environment
 
-Check out a few resources that may come in handy when working with NestJS:
+```bash
+cp .env.example .env
+```
 
-- Visit the [NestJS Documentation](https://docs.nestjs.com) to learn more about the framework.
-- For questions and support, please visit our [Discord channel](https://discord.gg/G7Qnnhy).
-- To dive deeper and get more hands-on experience, check out our official video [courses](https://courses.nestjs.com/).
-- Deploy your application to AWS with the help of [NestJS Mau](https://mau.nestjs.com) in just a few clicks.
-- Visualize your application graph and interact with the NestJS application in real-time using [NestJS Devtools](https://devtools.nestjs.com).
-- Need help with your project (part-time to full-time)? Check out our official [enterprise support](https://enterprise.nestjs.com).
-- To stay in the loop and get updates, follow us on [X](https://x.com/nestframework) and [LinkedIn](https://linkedin.com/company/nestjs).
-- Looking for a job, or have a job to offer? Check out our official [Jobs board](https://jobs.nestjs.com).
+Fill in the values — see [Environment variables](#environment-variables) below.
 
-## Support
+### 4. Seed tiers (first run only)
 
-Nest is an MIT-licensed open source project. It can grow thanks to the sponsors and support by the amazing backers. If you'd like to join them, please [read more here](https://docs.nestjs.com/support).
+```bash
+npm run seed:tiers:temp
+```
 
-## Stay in touch
+### 5. Run the HTTP server
 
-- Author - [Kamil Myśliwiec](https://twitter.com/kammysliwiec)
-- Website - [https://nestjs.com](https://nestjs.com/)
-- Twitter - [@nestframework](https://twitter.com/nestframework)
+```bash
+npm run start:dev
+```
+
+The API is available at `http://localhost:3500/api/v1`.
+
+### 6. Run the worker (separate terminal)
+
+```bash
+npm run build
+npm run start:worker
+```
+
+The worker bootstraps a NestJS application context and processes four queues: `workflow`, `post-schedule`, `linkedin-avatar-refresh`, and `email`.
+
+## Environment variables
+
+Copy `.env.example` and set the following. Keys not present in the example file are marked with *.
+
+| Variable | Description |
+|---|---|
+| `NODE_ENV` | `development` or `production` |
+| `PORT` | HTTP server port (default `3500`) |
+| `MONGO_URI` | MongoDB connection string |
+| `REDIS_URL` | Redis connection string |
+| `JWT_SECRET` | Secret used to sign JWT cookies |
+| `FRONTEND_URL` | Your frontend origin (for CORS and redirects) |
+| `ENCRYPTION_KEY` * | Arbitrary secret for AES-256-GCM encryption of LinkedIn tokens |
+| `LINKEDIN_CLIENT_ID` * | LinkedIn OAuth app client ID |
+| `LINKEDIN_CLIENT_SECRET` * | LinkedIn OAuth app client secret |
+| `LINKEDIN_REDIRECT_URI` * | OAuth callback URL registered in the LinkedIn app |
+| `GOOGLE_CLIENT_ID` * | Google OAuth app client ID |
+| `GOOGLE_CLIENT_SECRET` * | Google OAuth app client secret |
+| `GOOGLE_CALLBACK_URL` * | OAuth callback URL registered in the Google app |
+| `GOOGLE_API_KEY` * | YouTube Data API key |
+| `APIFY_API_TOKEN` * | Apify token for web research actors |
+| `OPENROUTER_API_KEY` * | OpenRouter API key for LLM calls |
+| `PADDLE_ENVIRONMENT` | `sandbox` or `production` |
+| `PADDLE_API_KEY` | Paddle API key |
+| `PADDLE_WEBHOOK_SECRET` | Paddle webhook signing secret |
+| `RESEND_API_KEY` | Resend API key for transactional email |
+| `MAIL_FROM` | Sender address for outbound email |
+| `ADMIN_DIAG_TOKEN` | Optional — set to enable `GET /api/v1/diagnostics/heap` |
+
+## Project structure
+
+```
+src/
+├── agent/          # LLM prompt definitions and agent service
+├── auth/           # Google & LinkedIn OAuth strategies, JWT guard
+├── database/       # Mongoose schemas (User, PostDraft, ConnectedAccount, Tier, …)
+├── feature-gating/ # Tier resolution, usage metering, subscription access guard
+├── llm/            # LLM strategy pattern (OpenRouter)
+├── payment/        # Paddle webhook handler
+├── post/           # Post CRUD and publish controller
+├── workflow/       # Queue producers, step handlers, workflow engine, BullMQ worker
+│   ├── engine/     # WorkflowDefinition, WorkflowRegistry, runWorkflow
+│   ├── steps/      # Individual step handlers
+│   ├── workers/    # workflow.worker.ts — the standalone worker entry point
+│   └── workflows/  # quickPostLinkedin, insightPostLinkedin pipeline definitions
+└── main.ts         # HTTP server entry point
+```
+
+## Architecture overview
+
+The application is intentionally split into two processes so the long-running AI workflows don't block HTTP request handling.
+
+```
+HTTP client
+    │
+    ▼
+NestJS HTTP server  ──enqueues jobs──►  Redis / BullMQ
+    │                                        │
+    │                               BullMQ worker process
+    │                                  ├── workflow queue      → AI post generation
+    │                                  ├── post-schedule queue → LinkedIn publish
+    │                                  ├── avatar-refresh      → token refresh
+    │                                  └── email queue         → Resend
+    ▼
+MongoDB
+```
+
+The workflow engine (`runWorkflow`) iterates an ordered list of `WorkflowStep` enum values, calling each registered step handler in sequence. A shared `state` object accumulates results across steps, making intermediate LLM outputs available to later steps in the same run.
+
+## Scripts
+
+```bash
+npm run start:dev     # HTTP server in watch mode
+npm run start:worker  # BullMQ worker (requires prior build)
+npm run build         # Compile TypeScript
+npm run lint          # ESLint with auto-fix
+npm run format        # Prettier
+npm run test          # Unit tests
+npm run test:cov      # Unit tests with coverage
+npm run test:e2e      # End-to-end tests
+```
+
+## Contributing
+
+1. Fork the repository and create a feature branch from `main`.
+2. Follow the conventions in `PROJECT_RULES.md` (kebab-case files, PascalCase classes, camelCase variables, no `I` prefix on interfaces).
+3. Write or update tests for changed behaviour.
+4. Open a pull request — keep commits focused and descriptions clear.
 
 ## License
 
-Nest is [MIT licensed](https://github.com/nestjs/nest/blob/master/LICENSE).
+This project is currently unlicensed. A licence file will be added before the first stable release.
