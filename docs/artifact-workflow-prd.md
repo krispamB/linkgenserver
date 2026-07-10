@@ -637,16 +637,32 @@ interface ToolCall         { id: string; name: string; input: unknown }
 interface Usage { promptTokens: number; completionTokens: number; totalTokens: number; cost: number }
 ```
 
-The OpenRouter strategy implements these over `@openrouter/sdk` — its `tool()` Zod helper
-for schema conversion, `chat.send` with `tools` for the single turn, and `usage.cost` /
-`costDetails` for real per-call dollar cost. Add a typed `LLMError { retryable }`: the
-`src/llm` layer owns retryable classification because it knows provider error semantics
-(429/5xx/network → retryable; 4xx/auth → terminal).
+The OpenRouter strategy implements these over `@openrouter/sdk` (**floor: `0.13.x`** — see
+below), using `chat.send` with `tools` for the single turn, `z.toJSONSchema` to convert a
+`ToolDefinition`'s Zod `parameters` into the JSON Schema that `tools[].function.parameters`
+expects, and `usage.cost` for real per-call dollar cost. Add a typed `LLMError { retryable }`:
+the `src/llm` layer owns retryable classification because it knows provider error semantics
+(429/408/5xx/network → retryable; 4xx/auth → terminal; a client-side abort is terminal,
+since the caller cancelled it).
 
 We deliberately do **not** adopt the SDK's `callModel` orchestrator, which ships an
 automatic multi-turn tool loop — burying the loop inside the vendor SDK defeats the
-provider-swappability the layering exists for. We lean on its lower-level per-turn helpers
-and own the loop.
+provider-swappability the layering exists for. We call `chat.send` directly and own the loop.
+
+**Do not use the SDK's `tool()` helper.** It builds `callModel`'s argument — a tool object
+carrying an `execute` function — not JSON Schema, so `chat.send` will not take it. Reaching
+for `tool()` quietly drags in the orchestrator this section just rejected.
+
+**`usage.cost` is not `usage.costDetails`.** `cost` is what OpenRouter charged the account;
+`costDetails` (`upstreamInferenceCost`, `upstreamInferencePromptCost`,
+`upstreamInferenceCompletionsCost`) is what the upstream provider charged *OpenRouter* —
+wholesale, excluding margin, and different under BYOK. Only `cost` may denominate credits
+(§9). `Usage` therefore carries `cost` alone; `costDetails` is not plumbed through.
+
+**SDK floor.** `usage.cost` does not exist on `@openrouter/sdk` before ~`0.13.x`: the older
+chat usage type has no cost field, the request carries no usage-accounting toggle, and the
+response is parsed through a plain `z.object`, so a `cost` key is stripped before it is read.
+`0.13.x` also nests the request under `chatRequest` and renames `ChatResponse` → `ChatResult`.
 
 ### Layer 2 — `AgentRunner`, provider-agnostic
 
@@ -1462,9 +1478,10 @@ leaves the tree green. `Blocked by` declares hard ordering.
 > **T1 — LLM layer: single-turn primitives + typed errors.**
 > Extend `LLMStrategy` with `complete` / `completeWithTools` / reserved `stream`. Add
 > `ToolDefinition`, `ToolCall`, `Usage`, and the assistant-with-tool-calls and `role:'tool'`
-> message variants. Implement in the OpenRouter strategy over `@openrouter/sdk`'s `tool()` +
-> `chat.send`, surfacing `usage.cost`. Add typed `LLMError { retryable }` (429/5xx/network →
-> retryable; 4xx/auth → terminal). *Blocked by: none.*
+> message variants. Implement in the OpenRouter strategy over `@openrouter/sdk` (≥ `0.13.x`)
+> using `z.toJSONSchema` + `chat.send`, surfacing `usage.cost`. Add typed
+> `LLMError { retryable }` (429/408/5xx/network → retryable; 4xx/auth → terminal).
+> *Blocked by: none.*
 
 > **T2 — `Artifact` schema + the POST arm of the content union.**
 > New `Artifact`/`ArtifactVersion` schema (§4) with `ArtifactType`, `VersionStatus`,
