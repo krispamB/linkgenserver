@@ -1,7 +1,41 @@
+import type { ZodType } from 'zod';
 import type { ArtifactType, CarouselTheme } from '../database/schemas';
 import type { ArtifactContent } from '../artifact/schemas';
-import type { Usage } from '../llm/interfaces';
+import type { LLMMessage, ToolCall, Usage } from '../llm/interfaces';
 import type { StylePreset } from './style-presets.config';
+
+/**
+ * A provider-agnostic tool the agent loop can call. `parameters` doubles as the
+ * JSON-Schema source Layer 1 hands the model and the validator for the arguments
+ * it sends back.
+ */
+export interface Tool<I = unknown, O = unknown> {
+  name: string;
+  description: string;
+  parameters: ZodType<I>;
+  execute: (input: I) => Promise<O>;
+}
+
+export interface AgentRunConfig {
+  system: string;
+  messages: LLMMessage[];
+  tools: Tool[];
+  maxSteps: number;
+  model?: string;
+}
+
+/** One turn of the loop that asked for tools, plus what running them produced. */
+export interface AgentStep {
+  toolCalls: ToolCall[];
+  toolResults: unknown[];
+  usage: Usage;
+}
+
+export interface AgentRunResult {
+  text: string;
+  steps: AgentStep[];
+  usage: Usage;
+}
 
 export interface ResearchSource {
   title: string;
