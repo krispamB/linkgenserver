@@ -22,6 +22,7 @@ describe('WorkflowRunService', () => {
     const workflowRunModel = {
       create: jest.fn(),
       updateOne: jest.fn().mockResolvedValue({ matchedCount: 1 }),
+      findById: jest.fn(),
     };
     const service = new WorkflowRunService(workflowRunModel as any);
 
@@ -75,6 +76,23 @@ describe('WorkflowRunService', () => {
         input: fixtures.input,
         creditsUsed: 0,
       });
+    });
+  });
+
+  describe('getRun', () => {
+    it('should load the run by id when the id is a valid ObjectId', async () => {
+      const run = { _id: fixtures.runId };
+      mocks.workflowRunModel.findById.mockResolvedValue(run);
+
+      await expect(service.getRun(fixtures.runId)).resolves.toBe(run);
+      expect(mocks.workflowRunModel.findById).toHaveBeenCalledWith(
+        fixtures.runId,
+      );
+    });
+
+    it('should return null without touching the model for a malformed id', async () => {
+      await expect(service.getRun('not-an-object-id')).resolves.toBeNull();
+      expect(mocks.workflowRunModel.findById).not.toHaveBeenCalled();
     });
   });
 

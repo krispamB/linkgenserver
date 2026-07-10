@@ -1,0 +1,180 @@
+jest.mock(
+  'src/database/schemas',
+  () => ({
+    ArtifactType: { POST: 'POST', POLL: 'POLL', DOCUMENT: 'DOCUMENT' },
+    CarouselTheme: {
+      BOLD: 'bold',
+      MINIMAL: 'minimal',
+      EDITORIAL: 'editorial',
+      GRADIENT: 'gradient',
+    },
+    VersionStatus: {
+      GENERATING: 'GENERATING',
+      READY: 'READY',
+      FAILED: 'FAILED',
+    },
+    RunKind: { INITIAL: 'INITIAL', REFINE: 'REFINE' },
+  }),
+  { virtual: true },
+);
+
+jest.mock('./artifact.service', () => ({ ArtifactService: class {} }), {
+  virtual: true,
+});
+jest.mock(
+  'src/feature-gating/credit-meter.service',
+  () => ({ CreditMeterService: class {} }),
+  { virtual: true },
+);
+jest.mock(
+  'src/workflow/workflow-run.service',
+  () => ({ WorkflowRunService: class {} }),
+  { virtual: true },
+);
+jest.mock('src/workflow/workflow.queue', () => ({ WorkflowQueue: class {} }), {
+  virtual: true,
+});
+
+import { ArtifactType, RunKind } from 'src/database/schemas';
+import { ArtifactGenerationService } from './artifact-generation.service';
+
+describe('ArtifactGenerationService', () => {
+  const makeService = () => {
+    const artifactService = {
+      createArtifact: jest.fn().mockResolvedValue({ _id: 'artifact123' }),
+    };
+    const workflowRunService = {
+      createRun: jest.fn().mockResolvedValue({ _id: 'run123' }),
+    };
+    const creditMeter = {
+      assertBalance: jest.fn().mockResolvedValue(undefined),
+    };
+    const workflowQueue = {
+      addArtifactRunJob: jest.fn().mockResolvedValue(undefined),
+    };
+
+    const service = new ArtifactGenerationService(
+      artifactService as any,
+      workflowRunService as any,
+      creditMeter as any,
+      workflowQueue as any,
+    );
+
+    const dto = {
+      type: ArtifactType.POST,
+      prompt: 'why staff engineers write',
+      withResearch: true,
+    };
+
+    return {
+      service,
+      mocks: {
+        artifactService,
+        workflowRunService,
+        creditMeter,
+        workflowQueue,
+      },
+      fixtures: { userId: 'user123', dto },
+    };
+  };
+
+  let service: ArtifactGenerationService;
+  let mocks: ReturnType<typeof makeService>['mocks'];
+  let fixtures: ReturnType<typeof makeService>['fixtures'];
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    ({ service, mocks, fixtures } = makeService());
+  });
+
+  describe('launchInitialRun', () => {
+    it('should return the artifactId and runId when the run is launched', async () => {
+      await expect(
+        service.launchInitialRun(fixtures.userId, fixtures.dto),
+      ).resolves.toEqual({ artifactId: 'artifact123', runId: 'run123' });
+    });
+
+    it('should pre-check the balance before creating anything', async () => {
+      const order: string[] = [];
+      mocks.creditMeter.assertBalance.mockImplementation(() => {
+        order.push('assertBalance');
+        return Promise.resolve();
+      });
+      mocks.artifactService.createArtifact.mockImplementation(() => {
+        order.push('createArtifact');
+        return Promise.resolve({ _id: 'artifact123' });
+      });
+
+      await service.launchInitialRun(fixtures.userId, fixtures.dto);
+
+      expect(order).toEqual(['assertBalance', 'createArtifact']);
+      expect(mocks.creditMeter.assertBalance).toHaveBeenCalledWith('user123');
+    });
+
+    it('should not create an artifact or enqueue when the balance check fails', async () => {
+      mocks.creditMeter.assertBalance.mockRejectedValue(
+        new Error('FEATURE_LIMIT_EXCEEDED'),
+      );
+
+      await expect(
+        service.launchInitialRun(fixtures.userId, fixtures.dto),
+      ).rejects.toThrow('FEATURE_LIMIT_EXCEEDED');
+
+      expect(mocks.artifactService.createArtifact).not.toHaveBeenCalled();
+      expect(mocks.workflowRunService.createRun).not.toHaveBeenCalled();
+      expect(mocks.workflowQueue.addArtifactRunJob).not.toHaveBeenCalled();
+    });
+
+    it('should create the artifact from the dto', async () => {
+      await service.launchInitialRun(fixtures.userId, {
+        type: ArtifactType.DOCUMENT,
+        prompt: 'deep modules',
+        withResearch: false,
+        stylePreset: 'educational' as any,
+        theme: 'minimal' as any,
+      });
+
+      expect(mocks.artifactService.createArtifact).toHaveBeenCalledWith(
+        'user123',
+        {
+          type: ArtifactType.DOCUMENT,
+          prompt: 'deep modules',
+          withResearch: false,
+          stylePreset: 'educational',
+          theme: 'minimal',
+        },
+      );
+    });
+
+    it('should persist an INITIAL run whose input targets version 1 of the new artifact', async () => {
+      await service.launchInitialRun(fixtures.userId, fixtures.dto);
+
+      expect(mocks.workflowRunService.createRun).toHaveBeenCalledWith({
+        userId: 'user123',
+        artifactId: 'artifact123',
+        targetVersion: 1,
+        kind: RunKind.INITIAL,
+        input: {
+          type: 'POST',
+          prompt: 'why staff engineers write',
+          withResearch: true,
+          kind: RunKind.INITIAL,
+          userId: 'user123',
+          artifactId: 'artifact123',
+          version: 1,
+        },
+      });
+    });
+
+    it('should enqueue the run keyed by the runId with the same input stored on the run', async () => {
+      await service.launchInitialRun(fixtures.userId, fixtures.dto);
+
+      const storedInput =
+        mocks.workflowRunService.createRun.mock.calls[0][0].input;
+      expect(mocks.workflowQueue.addArtifactRunJob).toHaveBeenCalledWith(
+        'run123',
+        storedInput,
+      );
+    });
+  });
+});

@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { Model, Types } from 'mongoose';
+import { Model, Types, isValidObjectId } from 'mongoose';
 import { RunKind, RunStatus, WorkflowRun } from '../database/schemas';
 import type { ResearchResult } from '../agent/agent-runner.interface';
 import type { BuildInput, RunRecordHandle } from './engine/workflow.types';
@@ -31,6 +31,16 @@ export class WorkflowRunService {
       input: input.input,
       creditsUsed: 0,
     });
+  }
+
+  /**
+   * The durable run record, or `null` for an unknown or malformed id. The SSE
+   * endpoint reads it to owner-scope a stream before opening it and to
+   * synthesize a snapshot when the Redis stream has already expired.
+   */
+  async getRun(runId: string): Promise<WorkflowRun | null> {
+    if (!isValidObjectId(runId)) return null;
+    return this.workflowRunModel.findById(runId);
   }
 
   /**
