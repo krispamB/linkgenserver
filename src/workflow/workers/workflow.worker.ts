@@ -3,6 +3,7 @@ import {
   EMAIL_QUEUE_NAME,
   LINKEDIN_AVATAR_REFRESH_QUEUE_NAME,
   MEDIA_UPLOAD_QUEUE_NAME,
+  QUEUE_NAME,
   SCHEDULE_QUEUE_NAME,
 } from '../workflow.constants';
 import 'dotenv/config';
@@ -23,6 +24,16 @@ import {
   handleMediaUploadJobExhausted,
   processMediaUploadJob,
 } from './media-upload.worker.handler';
+import {
+  ArtifactRunProcessor,
+  unimplementedRenderer,
+} from './artifact-run.worker.handler';
+import { AgentRunnerService } from '../../agent/agent-runner.service';
+import { ArtifactService } from '../../artifact/artifact.service';
+import { CreditMeterService } from '../../feature-gating/credit-meter.service';
+import { RedisService } from '../../redis/redis.service';
+import { WorkflowRunService } from '../workflow-run.service';
+import { BuildInput } from '../engine/workflow.types';
 
 async function bootstrapWorker() {
   const logger = new Logger(
@@ -41,9 +52,35 @@ async function bootstrapWorker() {
 
   logger.log('NestJs context ready');
 
-  // The `workflow` queue has no processor between #115 and #116: the legacy
-  // PostDraft pipeline is gone, and the artifact run that replaces it is wired
-  // up in #116 once its step handlers exist.
+  // Every `StepContext` role, resolved once. `RunEventEmitter` and
+  // `RunCreditMeter` are per-run, so the processor builds those itself.
+  const artifactRuns = new ArtifactRunProcessor({
+    agent: app.get(AgentRunnerService),
+    artifacts: app.get(ArtifactService),
+    renderer: unimplementedRenderer,
+    creditMeter: app.get(CreditMeterService),
+    runs: app.get(WorkflowRunService),
+    redis: app.get(RedisService).getClient(),
+    logger,
+  });
+
+  const workflowWorker = new Worker(
+    QUEUE_NAME,
+    (job: Job<BuildInput>) => artifactRuns.process(job),
+    {
+      connection: {
+        url: process.env.REDIS_URL!,
+        maxRetriesPerRequest: null,
+        enableReadyCheck: false,
+      },
+    },
+  );
+
+  // Fires on every failed attempt; the processor decides which one ends the run.
+  workflowWorker.on('failed', (job, error) => {
+    if (!job) return;
+    artifactRuns.onFailed(job, error).catch((err) => logger.error(err));
+  });
 
   new Worker(
     SCHEDULE_QUEUE_NAME,

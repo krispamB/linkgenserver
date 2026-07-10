@@ -27,13 +27,25 @@ const contentSchemaByType: Partial<
   [ArtifactType.POST]: postContentSchema,
 };
 
-export function parseArtifactContent(
+/**
+ * The schema itself, for callers that validate raw text rather than a parsed
+ * object — `AgentRunner.generate` hands it to `parseWithSchema`, which needs to
+ * own the JSON.parse step so a malformed body and a schema violation reach the
+ * repair retry through the same path.
+ */
+export function contentSchemaFor(
   type: ArtifactType,
-  raw: unknown,
-): ArtifactContent {
+): z.ZodType<ArtifactContent> {
   const schema = contentSchemaByType[type];
   if (!schema) {
     throw new Error(`No content schema implemented for artifact type ${type}`);
   }
-  return schema.parse(raw);
+  return schema;
+}
+
+export function parseArtifactContent(
+  type: ArtifactType,
+  raw: unknown,
+): ArtifactContent {
+  return contentSchemaFor(type).parse(raw);
 }
