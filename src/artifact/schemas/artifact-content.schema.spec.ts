@@ -73,11 +73,243 @@ describe('parseArtifactContent', () => {
     });
   });
 
+  describe('POLL arm', () => {
+    const validPoll = () => ({
+      poll: {
+        question: 'What is your favorite framework?',
+        options: ['NestJS', 'Express'],
+        durationDays: 7,
+      },
+    });
+
+    it('should accept a poll with the minimum two options and no commentary', () => {
+      const content = validPoll();
+      expect(parseArtifactContent(ArtifactType.POLL, content)).toEqual(content);
+    });
+
+    it('should accept a poll with four options', () => {
+      const content = {
+        poll: {
+          question: 'Best framework?',
+          options: ['NestJS', 'Express', 'Fastify', 'Hapi'],
+          durationDays: 1,
+        },
+      };
+      expect(parseArtifactContent(ArtifactType.POLL, content)).toEqual(content);
+    });
+
+    it('should accept an optional commentary alongside the poll', () => {
+      const content = {
+        commentary: 'Weighing in on the framework debate.',
+        poll: {
+          question: 'Which do you reach for?',
+          options: ['NestJS', 'Express'],
+          durationDays: 3,
+        },
+      };
+      expect(parseArtifactContent(ArtifactType.POLL, content)).toEqual(content);
+    });
+
+    it.each([1, 3, 7, 14])(
+      'should accept a durationDays of %i',
+      (durationDays) => {
+        const content = {
+          poll: { question: 'Q?', options: ['A', 'B'], durationDays },
+        };
+        expect(parseArtifactContent(ArtifactType.POLL, content)).toEqual(
+          content,
+        );
+      },
+    );
+
+    it('should reject the commentary when it exceeds 3000 LinkedIn characters', () => {
+      expect(() =>
+        parseArtifactContent(ArtifactType.POLL, {
+          commentary: 'a'.repeat(3001),
+          poll: { question: 'Q?', options: ['A', 'B'], durationDays: 7 },
+        }),
+      ).toThrow(ZodError);
+    });
+
+    describe('question validation', () => {
+      it('should reject a question of 141 characters', () => {
+        expect(() =>
+          parseArtifactContent(ArtifactType.POLL, {
+            poll: {
+              question: 'A'.repeat(141),
+              options: ['Yes', 'No'],
+              durationDays: 7,
+            },
+          }),
+        ).toThrow(ZodError);
+      });
+
+      it('should accept a question of exactly 140 characters', () => {
+        const content = {
+          poll: {
+            question: 'A'.repeat(140),
+            options: ['Yes', 'No'],
+            durationDays: 7,
+          },
+        };
+        expect(parseArtifactContent(ArtifactType.POLL, content)).toEqual(
+          content,
+        );
+      });
+
+      it('should reject an empty question', () => {
+        expect(() =>
+          parseArtifactContent(ArtifactType.POLL, {
+            poll: { question: '', options: ['Yes', 'No'], durationDays: 7 },
+          }),
+        ).toThrow(ZodError);
+      });
+
+      it('should reject a whitespace-only question', () => {
+        expect(() =>
+          parseArtifactContent(ArtifactType.POLL, {
+            poll: { question: '   ', options: ['Yes', 'No'], durationDays: 7 },
+          }),
+        ).toThrow(ZodError);
+      });
+    });
+
+    describe('options count validation', () => {
+      it('should reject fewer than two options', () => {
+        expect(() =>
+          parseArtifactContent(ArtifactType.POLL, {
+            poll: { question: 'Q?', options: ['Only one'], durationDays: 7 },
+          }),
+        ).toThrow(ZodError);
+      });
+
+      it('should reject more than four options', () => {
+        expect(() =>
+          parseArtifactContent(ArtifactType.POLL, {
+            poll: {
+              question: 'Q?',
+              options: ['A', 'B', 'C', 'D', 'E'],
+              durationDays: 7,
+            },
+          }),
+        ).toThrow(ZodError);
+      });
+    });
+
+    describe('individual option validation', () => {
+      it('should reject an empty option', () => {
+        expect(() =>
+          parseArtifactContent(ArtifactType.POLL, {
+            poll: { question: 'Q?', options: ['Valid', ''], durationDays: 7 },
+          }),
+        ).toThrow(ZodError);
+      });
+
+      it('should reject a whitespace-only option', () => {
+        expect(() =>
+          parseArtifactContent(ArtifactType.POLL, {
+            poll: {
+              question: 'Q?',
+              options: ['Valid', '   '],
+              durationDays: 7,
+            },
+          }),
+        ).toThrow(ZodError);
+      });
+
+      it('should reject an option of 31 characters', () => {
+        expect(() =>
+          parseArtifactContent(ArtifactType.POLL, {
+            poll: {
+              question: 'Q?',
+              options: ['Valid', 'A'.repeat(31)],
+              durationDays: 7,
+            },
+          }),
+        ).toThrow(ZodError);
+      });
+
+      it('should accept an option of exactly 30 characters', () => {
+        const content = {
+          poll: {
+            question: 'Q?',
+            options: ['Valid', 'A'.repeat(30)],
+            durationDays: 7,
+          },
+        };
+        expect(parseArtifactContent(ArtifactType.POLL, content)).toEqual(
+          content,
+        );
+      });
+    });
+
+    describe('uniqueness validation', () => {
+      it('should reject two identical options', () => {
+        expect(() =>
+          parseArtifactContent(ArtifactType.POLL, {
+            poll: {
+              question: 'Q?',
+              options: ['Same', 'Same'],
+              durationDays: 7,
+            },
+          }),
+        ).toThrow(ZodError);
+      });
+
+      it('should treat differently-cased options as duplicates', () => {
+        expect(() =>
+          parseArtifactContent(ArtifactType.POLL, {
+            poll: {
+              question: 'Q?',
+              options: ['nestjs', 'NestJS'],
+              durationDays: 7,
+            },
+          }),
+        ).toThrow(ZodError);
+      });
+
+      it('should treat options differing only in surrounding whitespace as duplicates', () => {
+        expect(() =>
+          parseArtifactContent(ArtifactType.POLL, {
+            poll: {
+              question: 'Q?',
+              options: ['NestJS', ' NestJS '],
+              durationDays: 7,
+            },
+          }),
+        ).toThrow(ZodError);
+      });
+    });
+
+    describe('durationDays validation', () => {
+      it('should reject a durationDays of 2', () => {
+        expect(() =>
+          parseArtifactContent(ArtifactType.POLL, {
+            poll: { question: 'Q?', options: ['A', 'B'], durationDays: 2 },
+          }),
+        ).toThrow(ZodError);
+      });
+
+      it('should reject a missing durationDays', () => {
+        expect(() =>
+          parseArtifactContent(ArtifactType.POLL, {
+            poll: { question: 'Q?', options: ['A', 'B'] },
+          }),
+        ).toThrow(ZodError);
+      });
+    });
+
+    it('should reject content with no poll object', () => {
+      expect(() =>
+        parseArtifactContent(ArtifactType.POLL, {
+          commentary: 'just text',
+        }),
+      ).toThrow(ZodError);
+    });
+  });
+
   describe('unimplemented arms', () => {
     it('should throw when no content schema exists for the artifact type', () => {
-      expect(() =>
-        parseArtifactContent(ArtifactType.POLL, { commentary: 'x' }),
-      ).toThrow('No content schema implemented for artifact type POLL');
       expect(() =>
         parseArtifactContent(ArtifactType.DOCUMENT, { commentary: 'x' }),
       ).toThrow('No content schema implemented for artifact type DOCUMENT');
