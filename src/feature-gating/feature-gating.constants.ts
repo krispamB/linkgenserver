@@ -1,8 +1,7 @@
 export const FEATURE_KEYS = {
-  AI_DRAFTS: 'ai_drafts',
+  CREDITS: 'credits',
   CONNECTED_ACCOUNTS: 'connected_accounts',
   SCHEDULED_POSTS: 'scheduled_posts',
-  MARK_TOKENS: 'mark_tokens',
 } as const;
 
 export type FeatureKey = (typeof FEATURE_KEYS)[keyof typeof FEATURE_KEYS];

@@ -89,61 +89,6 @@ export class FeatureGatingService {
     return limit;
   }
 
-  async assertAiDraftQuota(userId: string): Promise<void> {
-    const tier = await this.resolveEntitlementTier(userId);
-    const limit = this.getLimitFromTier(tier, FEATURE_KEYS.AI_DRAFTS);
-    const periodStart = await this.resolveUsagePeriodStart(userId);
-    const currentUsage = await this.getUsageCount(
-      userId,
-      FEATURE_KEYS.AI_DRAFTS,
-      periodStart,
-    );
-
-    if (currentUsage >= limit) {
-      throw new FeatureGateForbiddenException({
-        code: FEATURE_GATE_ERROR_CODE,
-        feature: FEATURE_KEYS.AI_DRAFTS,
-        limit,
-        currentUsage,
-        tier: {
-          id: tier._id.toString(),
-          name: tier.name,
-        },
-        upgradeHint: 'Upgrade your plan to create more AI drafts this month.',
-      });
-    }
-  }
-
-  async incrementAiDraftUsage(userId: string): Promise<void> {
-    const periodStart = await this.resolveUsagePeriodStart(userId);
-    const userObjectId = new Types.ObjectId(userId);
-
-    const query = {
-      user_id: userObjectId,
-      feature: FEATURE_KEYS.AI_DRAFTS,
-      periodStart,
-    };
-
-    const update = {
-      $inc: { count: 1 },
-      $setOnInsert: {
-        user_id: userObjectId,
-        feature: FEATURE_KEYS.AI_DRAFTS,
-        periodStart,
-      },
-    };
-
-    try {
-      await this.usageModel.updateOne(query, update, { upsert: true });
-    } catch (error: any) {
-      if (error?.code === 11000) {
-        await this.usageModel.updateOne(query, { $inc: { count: 1 } });
-        return;
-      }
-      throw error;
-    }
-  }
-
   async assertScheduledPostQuota(userId: string): Promise<void> {
     const tier = await this.resolveEntitlementTier(userId);
     const limit = this.getLimitFromTier(tier, FEATURE_KEYS.SCHEDULED_POSTS);
@@ -202,67 +147,59 @@ export class FeatureGatingService {
     }
   }
 
-  // Gate a Mark run against the per-period token budget. `estimatedTokens` is the
-  // worst-case pre-run estimate (input + reserved output + every charged tool once).
-  // Blocks only when the estimate would not fit the remaining budget; the run that
-  // is allowed may still overshoot at settlement, which next run's gate catches.
-  async assertMarkTokenQuota(
-    userId: string,
-    estimatedTokens: number,
-  ): Promise<void> {
+  // Headroom check, not a fit check: commit-on-success has no pre-run estimate to
+  // fit against, so a run may start with 5 credits left and settle at 60. The next
+  // run's guard catches the overshoot, which the agent's step cap bounds.
+  async assertBalance(userId: string): Promise<void> {
     const tier = await this.resolveEntitlementTier(userId);
-    const limit = this.getLimitFromTier(tier, FEATURE_KEYS.MARK_TOKENS);
+    const limit = this.getLimitFromTier(tier, FEATURE_KEYS.CREDITS);
 
     if (limit === -1) return; // unlimited
 
     const periodStart = await this.resolveUsagePeriodStart(userId);
     const currentUsage = await this.getUsageCount(
       userId,
-      FEATURE_KEYS.MARK_TOKENS,
+      FEATURE_KEYS.CREDITS,
       periodStart,
     );
 
-    if (currentUsage + estimatedTokens > limit) {
-      throw new FeatureGateForbiddenException({
-        code: FEATURE_GATE_ERROR_CODE,
-        feature: FEATURE_KEYS.MARK_TOKENS,
-        limit,
-        currentUsage,
-        tier: {
-          id: tier._id.toString(),
-          name: tier.name,
-        },
-        upgradeHint:
-          limit === 0
-            ? 'Mark is not available on your plan. Upgrade to start using Mark.'
-            : 'You have used your Mark token budget for this period. Upgrade for more.',
-      });
-    }
+    if (currentUsage < limit) return;
+
+    throw new FeatureGateForbiddenException({
+      code: FEATURE_GATE_ERROR_CODE,
+      feature: FEATURE_KEYS.CREDITS,
+      limit,
+      currentUsage,
+      tier: {
+        id: tier._id.toString(),
+        name: tier.name,
+      },
+      upgradeHint:
+        limit === 0
+          ? 'AI generation is not available on your plan. Upgrade to start creating.'
+          : 'You have used all your credits for this period. Upgrade for more.',
+    });
   }
 
-  // Settle a finished run by adding its actual token cost (LLM tokens + tool
-  // surcharges) to the period aggregate. Increment amount is variable, unlike the
-  // single-unit features, so callers pass the resolved total.
-  async incrementMarkTokenUsage(
-    userId: string,
-    actualTokens: number,
-  ): Promise<void> {
-    if (actualTokens <= 0) return;
+  // Settle a finished run against the period aggregate. The increment is variable,
+  // unlike the single-unit capacity counters, so callers pass the resolved total.
+  async debit(userId: string, credits: number): Promise<void> {
+    if (credits <= 0) return;
 
     const periodStart = await this.resolveUsagePeriodStart(userId);
     const userObjectId = new Types.ObjectId(userId);
 
     const query = {
       user_id: userObjectId,
-      feature: FEATURE_KEYS.MARK_TOKENS,
+      feature: FEATURE_KEYS.CREDITS,
       periodStart,
     };
 
     const update = {
-      $inc: { count: actualTokens },
+      $inc: { count: credits },
       $setOnInsert: {
         user_id: userObjectId,
-        feature: FEATURE_KEYS.MARK_TOKENS,
+        feature: FEATURE_KEYS.CREDITS,
         periodStart,
       },
     };
@@ -272,35 +209,12 @@ export class FeatureGatingService {
     } catch (error: any) {
       if (error?.code === 11000) {
         await this.usageModel.updateOne(query, {
-          $inc: { count: actualTokens },
+          $inc: { count: credits },
         });
         return;
       }
       throw error;
     }
-  }
-
-  // Current Mark token budget for a user, for live display in the Mark UI.
-  // `remaining` is -1 when the tier grants unlimited tokens (limit === -1).
-  async getMarkTokenBudget(userId: string): Promise<{
-    used: number;
-    limit: number;
-    remaining: number;
-  }> {
-    const tier = await this.resolveEntitlementTier(userId);
-    const limit = this.getLimitFromTier(tier, FEATURE_KEYS.MARK_TOKENS);
-    const periodStart = await this.resolveUsagePeriodStart(userId);
-    const used = await this.getUsageCount(
-      userId,
-      FEATURE_KEYS.MARK_TOKENS,
-      periodStart,
-    );
-
-    return {
-      used,
-      limit,
-      remaining: limit === -1 ? -1 : this.calculateRemaining(used, limit),
-    };
   }
 
   async assertConnectedAccountCapacity(params: {
@@ -361,9 +275,8 @@ export class FeatureGatingService {
     };
     usage: {
       connected_accounts: { used: number; limit: number; remaining: number };
-      ai_drafts: { used: number; limit: number; remaining: number };
       scheduled_posts: { used: number; limit: number; remaining: number };
-      mark_tokens: { used: number; limit: number; remaining: number };
+      credits: { used: number; limit: number; remaining: number };
     };
   }> {
     const entitlement = await this.resolveEntitlement(userId);
@@ -381,11 +294,7 @@ export class FeatureGatingService {
       }),
       this.getUsageCountsForFeatures(
         userId,
-        [
-          FEATURE_KEYS.AI_DRAFTS,
-          FEATURE_KEYS.SCHEDULED_POSTS,
-          FEATURE_KEYS.MARK_TOKENS,
-        ],
+        [FEATURE_KEYS.SCHEDULED_POSTS, FEATURE_KEYS.CREDITS],
         usagePeriod.periodStart,
       ),
     ]);
@@ -394,20 +303,15 @@ export class FeatureGatingService {
       tier,
       FEATURE_KEYS.CONNECTED_ACCOUNTS,
     );
-    const aiDraftsLimit = this.getLimitFromTier(tier, FEATURE_KEYS.AI_DRAFTS);
     const scheduledPostsLimit = this.getLimitFromTier(
       tier,
       FEATURE_KEYS.SCHEDULED_POSTS,
     );
 
-    const aiDraftsUsed = meteredUsageCounts[FEATURE_KEYS.AI_DRAFTS] ?? 0;
     const scheduledPostsUsed =
       meteredUsageCounts[FEATURE_KEYS.SCHEDULED_POSTS] ?? 0;
-    const markTokensUsed = meteredUsageCounts[FEATURE_KEYS.MARK_TOKENS] ?? 0;
-    const markTokensLimit = this.getLimitFromTier(
-      tier,
-      FEATURE_KEYS.MARK_TOKENS,
-    );
+    const creditsUsed = meteredUsageCounts[FEATURE_KEYS.CREDITS] ?? 0;
+    const creditsLimit = this.getLimitFromTier(tier, FEATURE_KEYS.CREDITS);
 
     return {
       tier: {
@@ -428,11 +332,6 @@ export class FeatureGatingService {
             connectedAccountsLimit,
           ),
         },
-        ai_drafts: {
-          used: aiDraftsUsed,
-          limit: aiDraftsLimit,
-          remaining: this.calculateRemaining(aiDraftsUsed, aiDraftsLimit),
-        },
         scheduled_posts: {
           used: scheduledPostsUsed,
           limit: scheduledPostsLimit,
@@ -441,13 +340,13 @@ export class FeatureGatingService {
             scheduledPostsLimit,
           ),
         },
-        mark_tokens: {
-          used: markTokensUsed,
-          limit: markTokensLimit,
+        credits: {
+          used: creditsUsed,
+          limit: creditsLimit,
           remaining:
-            markTokensLimit === -1
+            creditsLimit === -1
               ? -1
-              : this.calculateRemaining(markTokensUsed, markTokensLimit),
+              : this.calculateRemaining(creditsUsed, creditsLimit),
         },
       },
     };

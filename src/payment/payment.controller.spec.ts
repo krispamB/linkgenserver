@@ -53,8 +53,8 @@ describe('PaymentController', () => {
       },
       usage: {
         connected_accounts: { used: 1, limit: 1, remaining: 0 },
-        ai_drafts: { used: 2, limit: 5, remaining: 3 },
         scheduled_posts: { used: 0, limit: 3, remaining: 3 },
+        credits: { used: 200, limit: 2000, remaining: 1800 },
       },
     };
     const paymentService = {
