@@ -27,9 +27,14 @@ enforcement points, and the Paddle/tier-config implications**. The engine's hook
   balance guard, and the debit.
 - **#104 §7 emits raw signals, not credits:** each LLM turn → `record({ kind: 'llm',
   amount: usage.cost, detail: { model, totalTokens } })` where `usage.cost` is the
-  **real per-call USD cost** from OpenRouter's `costDetails`; each web search →
+  **real per-call USD cost OpenRouter charged the account**; each web search →
   `record({ kind: 'web_search', amount: 1 })`. Converting those to credits is this
   ticket's job.
+
+  > **Not `usage.costDetails`.** That sibling field reports what the *upstream provider*
+  > charged OpenRouter — wholesale, excluding OpenRouter's margin, and different under
+  > BYOK. Metering on it would systematically under-count real spend, worst where the
+  > margin is widest. `Usage` (PRD §7) carries `cost` alone, by design.
 
 ---
 
