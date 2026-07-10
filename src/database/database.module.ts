@@ -1,4 +1,10 @@
-import { Module, Global, Logger, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
+import {
+  Module,
+  Global,
+  Logger,
+  OnModuleInit,
+  OnModuleDestroy,
+} from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { MongooseModule, InjectConnection } from '@nestjs/mongoose';
 import { Connection } from 'mongoose';
@@ -21,6 +27,8 @@ import {
   OnboardingProfileSchema,
   Artifact,
   ArtifactSchema,
+  WorkflowRun,
+  WorkflowRunSchema,
 } from './schemas';
 
 @Global()
@@ -46,14 +54,17 @@ import {
       { name: Usage.name, schema: UsageSchema },
       { name: OnboardingProfile.name, schema: OnboardingProfileSchema },
       { name: Artifact.name, schema: ArtifactSchema },
+      { name: WorkflowRun.name, schema: WorkflowRunSchema },
     ]),
   ],
   exports: [MongooseModule],
 })
 export class DatabaseModule implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(DatabaseModule.name);
-  private readonly onConnected = () => this.logger.log('Database connected successfully');
-  private readonly onError = (err: unknown) => this.logger.error(`Database connection error: ${err}`);
+  private readonly onConnected = () =>
+    this.logger.log('Database connected successfully');
+  private readonly onError = (err: unknown) =>
+    this.logger.error(`Database connection error: ${err}`);
 
   constructor(@InjectConnection() private readonly connection: Connection) {}
 

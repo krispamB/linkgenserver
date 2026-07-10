@@ -7,3 +7,4 @@ export * from './billing-customer.schema';
 export * from './usage.schema';
 export * from './onboarding-profile.schema';
 export * from './artifact.schema';
+export * from './workflow-run.schema';

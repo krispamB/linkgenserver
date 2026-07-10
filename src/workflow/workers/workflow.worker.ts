@@ -3,17 +3,13 @@ import {
   EMAIL_QUEUE_NAME,
   LINKEDIN_AVATAR_REFRESH_QUEUE_NAME,
   MEDIA_UPLOAD_QUEUE_NAME,
-  QUEUE_NAME,
   SCHEDULE_QUEUE_NAME,
 } from '../workflow.constants';
 import 'dotenv/config';
 import { Logger } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from '../../app.module';
-import { AgentService } from '../../agent/agent.service';
 import { PostService } from '../../post/post.service';
-import { WorkflowRegistry } from '../engine/workflow.registory';
-import { runWorkflow } from '../engine/workflow.engine';
 import { getModelToken } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { User } from '../../database/schemas';
@@ -36,7 +32,6 @@ async function bootstrapWorker() {
   logger.log('Bootstrapping workflow context...');
   const app = await NestFactory.createApplicationContext(AppModule);
 
-  const agentService = app.get(AgentService);
   const postService = app.get(PostService);
   const authService = app.get(AuthService);
   const mailService = app.get(MailService);
@@ -46,33 +41,9 @@ async function bootstrapWorker() {
 
   logger.log('NestJs context ready');
 
-  new Worker(
-    QUEUE_NAME,
-    async (job: Job) => {
-      logger.log(`Processing job ${job.id}`);
-      const workflow = WorkflowRegistry[job.name];
-      if (!workflow) {
-        throw new Error(`Unknown workflow: ${job.name}`);
-      }
-
-      try {
-        return runWorkflow(workflow, job, {
-          logger,
-          agentService,
-        });
-      } catch (error) {
-        logger.error(error);
-        throw error;
-      }
-    },
-    {
-      connection: {
-        url: process.env.REDIS_URL!,
-        maxRetriesPerRequest: null,
-        enableReadyCheck: false,
-      },
-    },
-  );
+  // The `workflow` queue has no processor between #115 and #116: the legacy
+  // PostDraft pipeline is gone, and the artifact run that replaces it is wired
+  // up in #116 once its step handlers exist.
 
   new Worker(
     SCHEDULE_QUEUE_NAME,
