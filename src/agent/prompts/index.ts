@@ -1,3 +1,5 @@
+export * from './artifact-generation.prompts';
+export * from './research.prompts';
 export * from './generateKeywords.prompts';
 export * from './transcriptCompression.prompts';
 export * from './userIntent.promt';

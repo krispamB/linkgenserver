@@ -10,10 +10,7 @@ import 'dotenv/config';
 import { Logger } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from '../../app.module';
-import { AgentService } from '../../agent/agent.service';
 import { PostService } from '../../post/post.service';
-import { WorkflowRegistry } from '../engine/workflow.registory';
-import { runWorkflow } from '../engine/workflow.engine';
 import { getModelToken } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { User } from '../../database/schemas';
@@ -27,6 +24,16 @@ import {
   handleMediaUploadJobExhausted,
   processMediaUploadJob,
 } from './media-upload.worker.handler';
+import {
+  ArtifactRunProcessor,
+  unimplementedRenderer,
+} from './artifact-run.worker.handler';
+import { AgentRunnerService } from '../../agent/agent-runner.service';
+import { ArtifactService } from '../../artifact/artifact.service';
+import { CreditMeterService } from '../../feature-gating/credit-meter.service';
+import { RedisService } from '../../redis/redis.service';
+import { WorkflowRunService } from '../workflow-run.service';
+import { BuildInput } from '../engine/workflow.types';
 
 async function bootstrapWorker() {
   const logger = new Logger(
@@ -36,7 +43,6 @@ async function bootstrapWorker() {
   logger.log('Bootstrapping workflow context...');
   const app = await NestFactory.createApplicationContext(AppModule);
 
-  const agentService = app.get(AgentService);
   const postService = app.get(PostService);
   const authService = app.get(AuthService);
   const mailService = app.get(MailService);
@@ -46,25 +52,21 @@ async function bootstrapWorker() {
 
   logger.log('NestJs context ready');
 
-  new Worker(
-    QUEUE_NAME,
-    async (job: Job) => {
-      logger.log(`Processing job ${job.id}`);
-      const workflow = WorkflowRegistry[job.name];
-      if (!workflow) {
-        throw new Error(`Unknown workflow: ${job.name}`);
-      }
+  // Every `StepContext` role, resolved once. `RunEventEmitter` and
+  // `RunCreditMeter` are per-run, so the processor builds those itself.
+  const artifactRuns = new ArtifactRunProcessor({
+    agent: app.get(AgentRunnerService),
+    artifacts: app.get(ArtifactService),
+    renderer: unimplementedRenderer,
+    creditMeter: app.get(CreditMeterService),
+    runs: app.get(WorkflowRunService),
+    redis: app.get(RedisService).getClient(),
+    logger,
+  });
 
-      try {
-        return runWorkflow(workflow, job, {
-          logger,
-          agentService,
-        });
-      } catch (error) {
-        logger.error(error);
-        throw error;
-      }
-    },
+  const workflowWorker = new Worker(
+    QUEUE_NAME,
+    (job: Job<BuildInput>) => artifactRuns.process(job),
     {
       connection: {
         url: process.env.REDIS_URL!,
@@ -73,6 +75,12 @@ async function bootstrapWorker() {
       },
     },
   );
+
+  // Fires on every failed attempt; the processor decides which one ends the run.
+  workflowWorker.on('failed', (job, error) => {
+    if (!job) return;
+    artifactRuns.onFailed(job, error).catch((err) => logger.error(err));
+  });
 
   new Worker(
     SCHEDULE_QUEUE_NAME,

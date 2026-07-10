@@ -13,6 +13,7 @@ import { ConfigModule } from '@nestjs/config';
 import { ApifyModule } from './apify/apify.module';
 import { ActorsModule } from './actors/actors.module';
 import { WorkflowModule } from './workflow/workflow.module';
+import { WorkflowRunModule } from './workflow/workflow-run.module';
 import { DatabaseModule } from './database/database.module';
 import { AuthModule } from './auth/auth.module';
 import { ClerkAuthModule } from './auth/clerk';
@@ -45,6 +46,7 @@ import { ArtifactModule } from './artifact';
     }),
     ActorsModule,
     WorkflowModule,
+    WorkflowRunModule,
     DatabaseModule,
     AuthModule,
     ClerkAuthModule,

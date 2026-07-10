@@ -1,0 +1,279 @@
+import { Logger } from '@nestjs/common';
+import { Job, UnrecoverableError } from 'bullmq';
+
+// The builder reads these enums at load; the real barrel drags in Mongoose.
+jest.mock(
+  '../../database/schemas',
+  () => ({
+    ArtifactType: { POST: 'POST', POLL: 'POLL', DOCUMENT: 'DOCUMENT' },
+    RunKind: { INITIAL: 'INITIAL', REFINE: 'REFINE' },
+  }),
+  { virtual: true },
+);
+
+import { ContentValidationError } from '../../agent/agent-runner.error';
+import type { BuildInput } from '../engine/workflow.types';
+import {
+  ArtifactRunProcessor,
+  isTerminalJobFailure,
+  unimplementedRenderer,
+} from './artifact-run.worker.handler';
+
+const buildInput = (): BuildInput =>
+  ({
+    type: 'POST',
+    kind: 'INITIAL',
+    withResearch: false,
+    prompt: 'Why staff engineers should write more',
+    userId: 'user-1',
+    artifactId: 'artifact-1',
+    version: 1,
+  }) as unknown as BuildInput;
+
+const makeJob = (overrides: Partial<Job<BuildInput>> = {}): Job<BuildInput> =>
+  ({
+    id: 'run-1',
+    data: buildInput(),
+    attemptsMade: 1,
+    opts: { attempts: 3 },
+    ...overrides,
+  }) as unknown as Job<BuildInput>;
+
+const makeProcessor = () => {
+  const logger = {
+    log: jest.fn(),
+    warn: jest.fn(),
+    error: jest.fn(),
+  } as unknown as Logger;
+
+  // The emitter's whole contract, so its ordering and TTL behaviour stay under
+  // its own spec and this one only asserts that events reach Redis at all.
+  const redis = {
+    xadd: jest.fn().mockResolvedValue('1-0'),
+    expire: jest.fn().mockResolvedValue(1),
+  };
+
+  const agent = {
+    generate: jest.fn().mockResolvedValue({ commentary: 'Write more.' }),
+    research: jest.fn(),
+  };
+  const artifacts = {
+    readCurrent: jest.fn().mockResolvedValue({ version: 1 }),
+    setVersionContent: jest.fn().mockResolvedValue(undefined),
+    failVersion: jest.fn().mockResolvedValue(undefined),
+  };
+  const runHandle = {
+    runId: 'run-1',
+    setCurrentStep: jest.fn().mockResolvedValue(undefined),
+    saveResearchContext: jest.fn().mockResolvedValue(undefined),
+    complete: jest.fn().mockResolvedValue(undefined),
+    fail: jest.fn().mockResolvedValue(undefined),
+  };
+  const runs = { handleFor: jest.fn().mockReturnValue(runHandle) };
+  const creditMeter = {
+    assertBalance: jest.fn().mockResolvedValue(undefined),
+    toCredits: jest.fn().mockReturnValue(20),
+    debit: jest.fn().mockResolvedValue(undefined),
+  };
+
+  const processor = new ArtifactRunProcessor({
+    agent: agent as any,
+    artifacts: artifacts as any,
+    renderer: unimplementedRenderer,
+    creditMeter: creditMeter as any,
+    runs: runs as any,
+    redis: redis as any,
+    logger,
+  });
+
+  return {
+    processor,
+    mocks: { logger, redis, agent, artifacts, runs, runHandle, creditMeter },
+  };
+};
+
+/** The `event` field of each `XADD` this run wrote, in emission order. */
+const emittedTypes = (redis: { xadd: jest.Mock }): string[] =>
+  redis.xadd.mock.calls.map((call) => call[6] as string);
+
+const emittedSeqs = (redis: { xadd: jest.Mock }): number[] =>
+  redis.xadd.mock.calls.map(
+    (call) => (JSON.parse(call[8] as string) as { seq: number }).seq,
+  );
+
+let processor: ArtifactRunProcessor;
+let mocks: ReturnType<typeof makeProcessor>['mocks'];
+
+beforeEach(() => {
+  jest.clearAllMocks();
+  ({ processor, mocks } = makeProcessor());
+});
+
+describe('isTerminalJobFailure', () => {
+  it('should be terminal for an UnrecoverableError even with attempts remaining', () => {
+    const job = makeJob({ attemptsMade: 1 });
+    expect(isTerminalJobFailure(job, new UnrecoverableError('bad'))).toBe(true);
+  });
+
+  it('should be terminal when the attempt budget is exhausted', () => {
+    const job = makeJob({ attemptsMade: 3 });
+    expect(isTerminalJobFailure(job, new Error('transient'))).toBe(true);
+  });
+
+  it('should not be terminal for a transient failure with attempts remaining', () => {
+    const job = makeJob({ attemptsMade: 1 });
+    expect(isTerminalJobFailure(job, new Error('transient'))).toBe(false);
+  });
+
+  it('should treat a single-attempt job as exhausted on its first failure', () => {
+    const job = makeJob({ attemptsMade: 1, opts: {} as Job['opts'] });
+    expect(isTerminalJobFailure(job, new Error('transient'))).toBe(true);
+  });
+});
+
+describe('ArtifactRunProcessor', () => {
+  describe('process', () => {
+    it('should run a research-off POST job to a READY version', async () => {
+      await processor.process(makeJob());
+
+      expect(mocks.artifacts.setVersionContent).toHaveBeenCalledWith(
+        'artifact-1',
+        1,
+        { commentary: 'Write more.' },
+        undefined,
+      );
+      expect(mocks.runHandle.complete).toHaveBeenCalledTimes(1);
+      expect(mocks.artifacts.failVersion).not.toHaveBeenCalled();
+    });
+
+    it('should emit the honest three-step lifecycle', async () => {
+      await processor.process(makeJob());
+
+      expect(emittedTypes(mocks.redis)).toEqual([
+        'run.started',
+        'step.started',
+        'step.completed',
+        'step.started',
+        'step.completed',
+        'step.started',
+        'step.completed',
+        'run.completed',
+      ]);
+    });
+
+    it('should meter the LLM turn and commit the credits once', async () => {
+      mocks.agent.generate.mockImplementation((_input, hooks) => {
+        hooks.onUsage({
+          promptTokens: 10,
+          completionTokens: 5,
+          totalTokens: 15,
+          cost: 0.02,
+          model: 'test/generation-model',
+        });
+        return Promise.resolve({ commentary: 'Write more.' });
+      });
+
+      await processor.process(makeJob());
+
+      expect(mocks.creditMeter.toCredits).toHaveBeenCalledWith({
+        kind: 'llm',
+        amount: 0.02,
+        detail: { model: 'test/generation-model', totalTokens: 15 },
+      });
+      expect(mocks.creditMeter.debit).toHaveBeenCalledTimes(1);
+      expect(mocks.creditMeter.debit).toHaveBeenCalledWith('user-1', 20);
+      expect(mocks.runHandle.complete).toHaveBeenCalledWith(20);
+    });
+
+    it('should reject a job with no id, since events have nothing to key on', async () => {
+      await expect(
+        processor.process(makeJob({ id: undefined })),
+      ).rejects.toBeInstanceOf(UnrecoverableError);
+    });
+  });
+
+  describe('onFailed', () => {
+    it('should mark the version and run FAILED on a terminal failure', async () => {
+      const job = makeJob();
+      const error = new UnrecoverableError('commentary must not be empty');
+
+      await processor.onFailed(job, error);
+
+      expect(mocks.artifacts.failVersion).toHaveBeenCalledWith(
+        'artifact-1',
+        1,
+        'commentary must not be empty',
+      );
+      expect(mocks.runHandle.fail).toHaveBeenCalledWith(
+        'commentary must not be empty',
+      );
+      expect(emittedTypes(mocks.redis)).toEqual(['run.failed']);
+    });
+
+    it('should never commit credits for a failed run', async () => {
+      await processor.onFailed(makeJob(), new UnrecoverableError('nope'));
+
+      expect(mocks.creditMeter.debit).not.toHaveBeenCalled();
+    });
+
+    it('should continue the run seq rather than restart it, when the attempt ran here', async () => {
+      mocks.agent.generate.mockRejectedValue(
+        new ContentValidationError('commentary must not be empty'),
+      );
+      const job = makeJob();
+
+      const error = await processor.process(job).catch((e: Error) => e);
+      await processor.onFailed(job, error as Error);
+
+      expect(emittedTypes(mocks.redis)).toEqual([
+        'run.started',
+        'step.started',
+        'step.completed',
+        'step.started',
+        'step.failed',
+        'run.failed',
+      ]);
+      expect(emittedSeqs(mocks.redis)).toEqual([1, 2, 3, 4, 5, 6]);
+    });
+
+    it('should leave the version GENERATING when the attempt will be retried', async () => {
+      const job = makeJob({ attemptsMade: 1 });
+
+      await processor.onFailed(job, new Error('gateway timeout'));
+
+      expect(mocks.artifacts.failVersion).not.toHaveBeenCalled();
+      expect(mocks.runHandle.fail).not.toHaveBeenCalled();
+      expect(mocks.redis.xadd).not.toHaveBeenCalled();
+    });
+
+    it('should still announce run.failed when the attempt ran in another process', async () => {
+      await processor.onFailed(makeJob({ attemptsMade: 3 }), new Error('boom'));
+
+      expect(mocks.runHandle.fail).toHaveBeenCalledWith('boom');
+      expect(emittedTypes(mocks.redis)).toEqual(['run.failed']);
+    });
+
+    it('should log and return when the job has no id', async () => {
+      await processor.onFailed(
+        makeJob({ id: undefined, attemptsMade: 3 }),
+        new Error('boom'),
+      );
+
+      expect(mocks.runHandle.fail).not.toHaveBeenCalled();
+      expect(mocks.logger.error).toHaveBeenCalled();
+    });
+  });
+});
+
+describe('unimplementedRenderer', () => {
+  it('should reject terminally rather than pretend to render', async () => {
+    await expect(
+      unimplementedRenderer.render({
+        artifactId: 'artifact-1',
+        version: 1,
+        templateId: 'minimal' as never,
+        slides: [],
+      }),
+    ).rejects.toMatchObject({ retryable: false });
+  });
+});

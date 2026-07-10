@@ -70,7 +70,6 @@ export class PostService {
   ) {}
 
   async createDraft(user: User, accountId: string, dto: InputDto) {
-    await this.featureGatingService.assertAiDraftQuota(user._id.toString());
     await this.getOwnedLinkedinConnectedAccount(user._id.toString(), accountId);
 
     const draft = new this.postDraftModel({
@@ -88,7 +87,6 @@ export class PostService {
       workflowName: dto.contentType,
       input: dto,
     });
-    await this.featureGatingService.incrementAiDraftUsage(user._id.toString());
 
     return workflowId;
   }

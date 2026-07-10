@@ -78,6 +78,34 @@ export class ArtifactService implements ArtifactWriter {
     );
   }
 
+  /**
+   * Terminal end of a run: the version keeps its place in the artifact's
+   * history rather than being removed, so the user can see what failed and
+   * refine from it.
+   */
+  async failVersion(
+    artifactId: string,
+    version: number,
+    failureReason: string,
+  ): Promise<void> {
+    const artifact = await this.getLiveArtifact(artifactId);
+    if (!artifact.versions.some((v) => v.version === version)) {
+      throw new NotFoundException(
+        `Version ${version} not found on artifact ${artifactId}`,
+      );
+    }
+
+    await this.artifactModel.updateOne(
+      { _id: artifact._id, 'versions.version': version },
+      {
+        $set: {
+          'versions.$.status': VersionStatus.FAILED,
+          'versions.$.failureReason': failureReason,
+        },
+      },
+    );
+  }
+
   async readCurrent(artifactId: string): Promise<CurrentVersionRead> {
     const artifact = await this.getLiveArtifact(artifactId);
     const current = artifact.versions.find(

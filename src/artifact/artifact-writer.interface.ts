@@ -24,4 +24,11 @@ export interface ArtifactWriter {
     render?: VersionRender,
   ): Promise<void>;
   readCurrent(artifactId: string): Promise<CurrentVersionRead>;
+  // Called only by the engine's terminal-failure handler (#115). FAILED
+  // versions stay visible in the library, so the user can refine from one.
+  failVersion(
+    artifactId: string,
+    version: number,
+    failureReason: string,
+  ): Promise<void>;
 }

@@ -190,6 +190,60 @@ describe('ArtifactService', () => {
     });
   });
 
+  describe('failVersion', () => {
+    const generatingArtifact = () => ({
+      _id: fixtures.artifactId,
+      type: ArtifactType.POST,
+      versions: [{ version: 1, status: VersionStatus.GENERATING, content: {} }],
+    });
+
+    it('should flip the version to FAILED with the reason when the version exists', async () => {
+      mocks.artifactModel.findById.mockResolvedValue(generatingArtifact());
+
+      await service.failVersion(fixtures.artifactId, 1, 'insufficient credits');
+
+      expect(mocks.artifactModel.updateOne).toHaveBeenCalledWith(
+        { _id: fixtures.artifactId, 'versions.version': 1 },
+        {
+          $set: {
+            'versions.$.status': VersionStatus.FAILED,
+            'versions.$.failureReason': 'insufficient credits',
+          },
+        },
+      );
+    });
+
+    it('should preserve the version rather than remove it, so the user can refine from it', async () => {
+      mocks.artifactModel.findById.mockResolvedValue(generatingArtifact());
+
+      await service.failVersion(fixtures.artifactId, 1, 'zod invalid');
+
+      const [, update] = mocks.artifactModel.updateOne.mock.calls[0] as [
+        unknown,
+        { $set: Record<string, unknown> },
+      ];
+      expect(update.$set).not.toHaveProperty('versions.$.content');
+    });
+
+    it('should throw NotFoundException when the artifact does not exist', async () => {
+      mocks.artifactModel.findById.mockResolvedValue(null);
+
+      await expect(
+        service.failVersion(fixtures.artifactId, 1, 'boom'),
+      ).rejects.toMatchObject({ name: 'NotFoundException' });
+      expect(mocks.artifactModel.updateOne).not.toHaveBeenCalled();
+    });
+
+    it('should throw NotFoundException when the version does not exist on the artifact', async () => {
+      mocks.artifactModel.findById.mockResolvedValue(generatingArtifact());
+
+      await expect(
+        service.failVersion(fixtures.artifactId, 2, 'boom'),
+      ).rejects.toMatchObject({ name: 'NotFoundException' });
+      expect(mocks.artifactModel.updateOne).not.toHaveBeenCalled();
+    });
+  });
+
   describe('readCurrent', () => {
     it('should return the current version content when the artifact exists', async () => {
       mocks.artifactModel.findById.mockResolvedValue({

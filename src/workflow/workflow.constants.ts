@@ -1,9 +1,9 @@
 export enum WorkflowStep {
-  EXTRACT_INTENT = 'extractIntent',
-  GET_QUERIES = 'getQueries',
-  RUN_RESEARCH = 'runResearch',
-  CREATE_DRAFT = 'createDraft',
-  CREATE_LINKEDIN_DRAFT = 'createLinkedinDraft',
+  RESOLVE_INPUT = 'RESOLVE_INPUT',
+  RESEARCH = 'RESEARCH',
+  GENERATE = 'GENERATE',
+  RENDER_PDF = 'RENDER_PDF',
+  PERSIST_VERSION = 'PERSIST_VERSION',
 }
 
 export enum ContentType {

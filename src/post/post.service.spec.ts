@@ -176,8 +176,6 @@ describe('PostService.createDraft', () => {
       save,
     }));
     const addWorkflowJob = jest.fn().mockResolvedValue(undefined);
-    const assertAiDraftQuota = jest.fn().mockResolvedValue(undefined);
-    const incrementAiDraftUsage = jest.fn().mockResolvedValue(undefined);
     const connectedAccountFindById = jest.fn().mockResolvedValue({
       user: userId,
       provider: 'LINKEDIN',
@@ -188,10 +186,6 @@ describe('PostService.createDraft', () => {
       findById: connectedAccountFindById,
     };
     (service as any).workflowQueue = { addWorkflowJob };
-    (service as any).featureGatingService = {
-      assertAiDraftQuota,
-      incrementAiDraftUsage,
-    };
 
     const user = { _id: userId } as any;
     const accountId = new Types.ObjectId().toString();
@@ -202,16 +196,14 @@ describe('PostService.createDraft', () => {
 
     const workflowId = await service.createDraft(user, accountId, dto);
 
-    expect(assertAiDraftQuota).toHaveBeenCalledWith(user._id.toString());
     expect(addWorkflowJob).toHaveBeenCalledWith(workflowId, {
       workflowName: dto.contentType,
       input: dto,
     });
-    expect(incrementAiDraftUsage).toHaveBeenCalledWith(user._id.toString());
     expect(save).toHaveBeenCalled();
   });
 
-  it('does not increment usage when draft creation workflow enqueue fails', async () => {
+  it('propagates the failure when draft creation workflow enqueue fails', async () => {
     const service = Object.create(PostService.prototype) as PostService;
     const save = jest.fn().mockResolvedValue(undefined);
     const draftId = new Types.ObjectId();
@@ -222,8 +214,6 @@ describe('PostService.createDraft', () => {
     const addWorkflowJob = jest
       .fn()
       .mockRejectedValue(new Error('queue unavailable'));
-    const assertAiDraftQuota = jest.fn().mockResolvedValue(undefined);
-    const incrementAiDraftUsage = jest.fn().mockResolvedValue(undefined);
     const userId = new Types.ObjectId();
     const connectedAccountFindById = jest.fn().mockResolvedValue({
       user: userId,
@@ -235,10 +225,6 @@ describe('PostService.createDraft', () => {
       findById: connectedAccountFindById,
     };
     (service as any).workflowQueue = { addWorkflowJob };
-    (service as any).featureGatingService = {
-      assertAiDraftQuota,
-      incrementAiDraftUsage,
-    };
 
     const user = { _id: userId } as any;
     const accountId = new Types.ObjectId().toString();
@@ -250,7 +236,6 @@ describe('PostService.createDraft', () => {
     await expect(service.createDraft(user, accountId, dto)).rejects.toThrow(
       'queue unavailable',
     );
-    expect(incrementAiDraftUsage).not.toHaveBeenCalled();
   });
 
   it('persists provided style preset on draft creation', async () => {
@@ -263,8 +248,6 @@ describe('PostService.createDraft', () => {
       save,
     }));
     const addWorkflowJob = jest.fn().mockResolvedValue(undefined);
-    const assertAiDraftQuota = jest.fn().mockResolvedValue(undefined);
-    const incrementAiDraftUsage = jest.fn().mockResolvedValue(undefined);
     const connectedAccountFindById = jest.fn().mockResolvedValue({
       user: userId,
       provider: 'LINKEDIN',
@@ -275,10 +258,6 @@ describe('PostService.createDraft', () => {
       findById: connectedAccountFindById,
     };
     (service as any).workflowQueue = { addWorkflowJob };
-    (service as any).featureGatingService = {
-      assertAiDraftQuota,
-      incrementAiDraftUsage,
-    };
 
     const user = { _id: userId } as any;
     const accountId = new Types.ObjectId().toString();
@@ -1647,8 +1626,6 @@ describe('PostService.completeMediaUpload', () => {
     );
 
     expect(headFile).toHaveBeenCalledTimes(1);
-    expect(
-      (mocks.addMediaUploadJob as jest.Mock).mock.calls[0][0].items,
-    ).toHaveLength(1);
+    expect(mocks.addMediaUploadJob.mock.calls[0][0].items).toHaveLength(1);
   });
 });
