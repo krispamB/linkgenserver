@@ -28,6 +28,7 @@ import { FeedbackModule } from './feedback/feedback.module';
 import { OnboardingModule } from './onboarding';
 import { DiagnosticsModule } from './diagnostics/diagnostics.module';
 import { MarkModule } from './mark';
+import { ArtifactModule } from './artifact';
 
 @Module({
   imports: [
@@ -54,6 +55,7 @@ import { MarkModule } from './mark';
     OnboardingModule,
     DiagnosticsModule,
     MarkModule,
+    ArtifactModule,
   ],
   controllers: [AppController],
   providers: [AppService],

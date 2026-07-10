@@ -1,0 +1,27 @@
+import { ArtifactType } from 'src/database/schemas';
+import { ArtifactContent } from './schemas';
+
+// RENDER_PDF's output for DOCUMENT artifacts, folded into content.document
+// by setVersionContent.
+export interface VersionRender {
+  pdfKey: string;
+  pageCount: number;
+}
+
+export interface CurrentVersionRead {
+  type: ArtifactType;
+  version: number;
+  content: ArtifactContent;
+}
+
+// Narrow role interface consumed by the workflow engine's StepContext (#115):
+// steps depend on this, not on the full ArtifactService surface.
+export interface ArtifactWriter {
+  setVersionContent(
+    artifactId: string,
+    version: number,
+    content: ArtifactContent,
+    render?: VersionRender,
+  ): Promise<void>;
+  readCurrent(artifactId: string): Promise<CurrentVersionRead>;
+}
