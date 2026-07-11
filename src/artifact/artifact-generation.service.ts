@@ -11,6 +11,10 @@ export interface LaunchResult {
   runId: string;
 }
 
+export interface RefineLaunchResult extends LaunchResult {
+  version: number;
+}
+
 /**
  * Orchestrates artifact creation over HTTP: a fast balance pre-check, then the
  * `Artifact` → `WorkflowRun` → BullMQ-job chain that a single 202 hands to the
@@ -53,17 +57,65 @@ export class ArtifactGenerationService {
       version: 1,
     };
 
+    const runId = await this.persistAndEnqueueRun(
+      userId,
+      artifactId,
+      buildInput,
+    );
+
+    return { artifactId, runId };
+  }
+
+  async launchRefineRun(
+    userId: string,
+    artifactId: string,
+    feedback: string,
+  ): Promise<RefineLaunchResult> {
+    await this.creditMeter.assertBalance(userId);
+
+    const refinement = await this.artifactService.appendRefineVersion(
+      userId,
+      artifactId,
+      feedback,
+    );
+
+    const buildInput: BuildInput = {
+      type: refinement.type,
+      prompt: refinement.prompt,
+      withResearch: refinement.withResearch,
+      stylePreset: refinement.stylePreset,
+      theme: refinement.theme,
+      kind: RunKind.REFINE,
+      userId,
+      artifactId,
+      version: refinement.version,
+    };
+
+    const runId = await this.persistAndEnqueueRun(
+      userId,
+      artifactId,
+      buildInput,
+    );
+
+    return { artifactId, version: refinement.version, runId };
+  }
+
+  private async persistAndEnqueueRun(
+    userId: string,
+    artifactId: string,
+    input: BuildInput,
+  ): Promise<string> {
     const run = await this.workflowRunService.createRun({
       userId,
       artifactId,
-      targetVersion: 1,
-      kind: RunKind.INITIAL,
-      input: buildInput,
+      targetVersion: input.version,
+      kind: input.kind,
+      input,
     });
     const runId = run._id.toString();
 
-    await this.workflowQueue.addArtifactRunJob(runId, buildInput);
+    await this.workflowQueue.addArtifactRunJob(runId, input);
 
-    return { artifactId, runId };
+    return runId;
   }
 }

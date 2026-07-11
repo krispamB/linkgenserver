@@ -21,7 +21,7 @@ import {
 // These POST-run tests never reach RENDER_PDF, so a never-called stub suffices.
 const stubRenderer = { render: jest.fn() };
 
-const buildInput = (): BuildInput =>
+const buildInput = (overrides: Partial<BuildInput> = {}): BuildInput =>
   ({
     type: 'POST',
     kind: 'INITIAL',
@@ -30,6 +30,7 @@ const buildInput = (): BuildInput =>
     userId: 'user-1',
     artifactId: 'artifact-1',
     version: 1,
+    ...overrides,
   }) as unknown as BuildInput;
 
 const makeJob = (overrides: Partial<Job<BuildInput>> = {}): Job<BuildInput> =>
@@ -61,6 +62,7 @@ const makeProcessor = () => {
   };
   const artifacts = {
     readCurrent: jest.fn().mockResolvedValue({ version: 1 }),
+    readRefineInput: jest.fn(),
     setVersionContent: jest.fn().mockResolvedValue(undefined),
     failVersion: jest.fn().mockResolvedValue(undefined),
   };
@@ -68,6 +70,7 @@ const makeProcessor = () => {
     runId: 'run-1',
     setCurrentStep: jest.fn().mockResolvedValue(undefined),
     saveResearchContext: jest.fn().mockResolvedValue(undefined),
+    getLatestCompletedResearch: jest.fn(),
     complete: jest.fn().mockResolvedValue(undefined),
     fail: jest.fn().mockResolvedValue(undefined),
   };
@@ -161,6 +164,118 @@ describe('ArtifactRunProcessor', () => {
         'step.completed',
         'run.completed',
       ]);
+    });
+
+    it('should refine from cached research without running the RESEARCH step when processing a REFINE job', async () => {
+      const research = {
+        findings: 'Cached findings',
+        sources: [{ title: 'Source', url: 'https://example.com' }],
+      };
+      mocks.artifacts.readCurrent.mockResolvedValue({ version: 2 });
+      mocks.artifacts.readRefineInput.mockResolvedValue({
+        priorContent: { commentary: 'The original post.' },
+        feedback: 'Make the hook sharper',
+      });
+      mocks.runHandle.getLatestCompletedResearch.mockResolvedValue(research);
+      const job = makeJob({
+        data: buildInput({ kind: 'REFINE', withResearch: true, version: 2 }),
+      });
+
+      await processor.process(job);
+
+      expect(mocks.agent.research).not.toHaveBeenCalled();
+      expect(mocks.agent.generate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          research,
+          refine: {
+            priorContent: { commentary: 'The original post.' },
+            feedback: 'Make the hook sharper',
+          },
+        }),
+        expect.any(Object),
+      );
+      const runStarted = mocks.redis.xadd.mock.calls.find(
+        (call) => call[6] === 'run.started',
+      );
+      expect(JSON.parse(runStarted[8]).steps).toEqual([
+        'RESOLVE_INPUT',
+        'GENERATE',
+        'PERSIST_VERSION',
+      ]);
+      expect(emittedTypes(mocks.redis)).toEqual([
+        'run.started',
+        'step.started',
+        'step.completed',
+        'step.started',
+        'step.completed',
+        'step.started',
+        'step.completed',
+        'run.completed',
+      ]);
+    });
+
+    it('should render a DOCUMENT refine to the new version key when processing a DOCUMENT REFINE job', async () => {
+      mocks.artifacts.readCurrent.mockResolvedValue({ version: 2 });
+      mocks.artifacts.readRefineInput.mockResolvedValue({
+        priorContent: {
+          document: {
+            templateId: 'minimal',
+            slides: [
+              { type: 'cover', fields: { title: 'The original' } },
+              { type: 'content', fields: { heading: 'A', body: 'B' } },
+            ],
+          },
+        },
+        feedback: 'Make the first slide clearer',
+      });
+      mocks.runHandle.getLatestCompletedResearch.mockResolvedValue(undefined);
+      mocks.agent.generate.mockResolvedValue({
+        document: {
+          templateId: 'minimal',
+          slides: [
+            { type: 'cover', fields: { title: 'A clearer cover' } },
+            { type: 'content', fields: { heading: 'A', body: 'B' } },
+          ],
+        },
+      });
+      stubRenderer.render.mockResolvedValue({
+        pdfKey: 'artifacts/artifact-1/2/document.pdf',
+        pageCount: 2,
+      });
+      const job = makeJob({
+        data: buildInput({
+          type: 'DOCUMENT',
+          kind: 'REFINE',
+          withResearch: true,
+          version: 2,
+        }),
+      });
+
+      await processor.process(job);
+
+      expect(stubRenderer.render).toHaveBeenCalledWith({
+        artifactId: 'artifact-1',
+        version: 2,
+        templateId: 'minimal',
+        slides: [
+          { type: 'cover', fields: { title: 'A clearer cover' } },
+          { type: 'content', fields: { heading: 'A', body: 'B' } },
+        ],
+      });
+      expect(mocks.artifacts.setVersionContent).toHaveBeenCalledWith(
+        'artifact-1',
+        2,
+        {
+          document: {
+            templateId: 'minimal',
+            slides: [
+              { type: 'cover', fields: { title: 'A clearer cover' } },
+              { type: 'content', fields: { heading: 'A', body: 'B' } },
+            ],
+          },
+        },
+        { pdfKey: 'artifacts/artifact-1/2/document.pdf', pageCount: 2 },
+      );
     });
 
     it('should meter the LLM turn and commit the credits once', async () => {

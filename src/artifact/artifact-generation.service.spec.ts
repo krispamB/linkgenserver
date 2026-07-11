@@ -42,6 +42,12 @@ describe('ArtifactGenerationService', () => {
   const makeService = () => {
     const artifactService = {
       createArtifact: jest.fn().mockResolvedValue({ _id: 'artifact123' }),
+      appendRefineVersion: jest.fn().mockResolvedValue({
+        version: 2,
+        type: 'POST',
+        prompt: 'why staff engineers write',
+        withResearch: true,
+      }),
     };
     const workflowRunService = {
       createRun: jest.fn().mockResolvedValue({ _id: 'run123' }),
@@ -175,6 +181,109 @@ describe('ArtifactGenerationService', () => {
         'run123',
         storedInput,
       );
+    });
+  });
+
+  describe('launchRefineRun', () => {
+    it('should return the artifactId, new version, and runId when the refine run is launched', async () => {
+      await expect(
+        service.launchRefineRun(
+          'user123',
+          'artifact123',
+          'Make the hook sharper',
+        ),
+      ).resolves.toEqual({
+        artifactId: 'artifact123',
+        version: 2,
+        runId: 'run123',
+      });
+    });
+
+    it('should assert balance before appending the new version when launching a refine', async () => {
+      const order: string[] = [];
+      mocks.creditMeter.assertBalance.mockImplementation(() => {
+        order.push('assertBalance');
+        return Promise.resolve();
+      });
+      mocks.artifactService.appendRefineVersion.mockImplementation(() => {
+        order.push('appendRefineVersion');
+        return Promise.resolve({
+          version: 2,
+          type: ArtifactType.POST,
+          prompt: 'why staff engineers write',
+          withResearch: true,
+        });
+      });
+
+      await service.launchRefineRun(
+        'user123',
+        'artifact123',
+        'Make the hook sharper',
+      );
+
+      expect(order).toEqual(['assertBalance', 'appendRefineVersion']);
+      expect(mocks.creditMeter.assertBalance).toHaveBeenCalledWith('user123');
+      expect(mocks.artifactService.appendRefineVersion).toHaveBeenCalledWith(
+        'user123',
+        'artifact123',
+        'Make the hook sharper',
+      );
+    });
+
+    it('should persist and enqueue a REFINE run when the version is appended', async () => {
+      mocks.artifactService.appendRefineVersion.mockResolvedValue({
+        version: 3,
+        type: ArtifactType.DOCUMENT,
+        prompt: 'deep modules',
+        withResearch: true,
+        stylePreset: 'educational',
+        theme: 'minimal',
+      });
+
+      await service.launchRefineRun(
+        'user123',
+        'artifact123',
+        'Use a more concrete example',
+      );
+
+      expect(mocks.workflowRunService.createRun).toHaveBeenCalledWith({
+        userId: 'user123',
+        artifactId: 'artifact123',
+        targetVersion: 3,
+        kind: RunKind.REFINE,
+        input: {
+          type: ArtifactType.DOCUMENT,
+          prompt: 'deep modules',
+          withResearch: true,
+          stylePreset: 'educational',
+          theme: 'minimal',
+          kind: RunKind.REFINE,
+          userId: 'user123',
+          artifactId: 'artifact123',
+          version: 3,
+        },
+      });
+
+      const storedInput =
+        mocks.workflowRunService.createRun.mock.calls[0][0].input;
+      expect(mocks.workflowQueue.addArtifactRunJob).toHaveBeenCalledWith(
+        'run123',
+        storedInput,
+      );
+    });
+
+    it('should not append or enqueue when the balance check fails for a refine', async () => {
+      mocks.creditMeter.assertBalance.mockRejectedValue(
+        new Error('FEATURE_LIMIT_EXCEEDED'),
+      );
+
+      await expect(
+        service.launchRefineRun('user123', 'artifact123', 'Try again'),
+      ).rejects.toThrow('FEATURE_LIMIT_EXCEEDED');
+
+      expect(mocks.artifactService.appendRefineVersion).not.toHaveBeenCalled();
+      expect(mocks.workflowRunService.createRun).not.toHaveBeenCalled();
+      expect(mocks.workflowQueue.addArtifactRunJob).not.toHaveBeenCalled();
     });
   });
 });

@@ -7,6 +7,7 @@ import type {
 import type { ArtifactContent } from '../../artifact/schemas';
 import type {
   ArtifactWriter,
+  RefineContext,
   VersionRender,
 } from '../../artifact/artifact-writer.interface';
 import type {
@@ -48,7 +49,7 @@ export interface BuildInput extends BuildSpec {
 export interface RunState {
   input: BuildInput;
   research?: ResearchResult;
-  refine?: { priorContent: ArtifactContent; feedback: string };
+  refine?: RefineContext;
   content?: ArtifactContent;
   render?: VersionRender;
 }
@@ -100,6 +101,9 @@ export interface RunRecordHandle {
   readonly runId: string;
   setCurrentStep(step: WorkflowStep): Promise<void>;
   saveResearchContext(research: ResearchResult): Promise<void>;
+  getLatestCompletedResearch(
+    artifactId: string,
+  ): Promise<ResearchResult | undefined>;
   complete(creditsUsed: number): Promise<void>;
   fail(failureReason: string): Promise<void>;
 }

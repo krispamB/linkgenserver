@@ -43,6 +43,22 @@ export class WorkflowRunService {
     return this.workflowRunModel.findById(runId);
   }
 
+  async getLatestCompletedResearch(
+    artifactId: string,
+  ): Promise<ResearchResult | undefined> {
+    if (!isValidObjectId(artifactId)) return undefined;
+
+    const run = await this.workflowRunModel
+      .findOne({
+        artifact: new Types.ObjectId(artifactId),
+        status: RunStatus.COMPLETED,
+        researchContext: { $exists: true },
+      })
+      .sort({ createdAt: -1 });
+
+    return run?.researchContext;
+  }
+
   /**
    * The engine depends on `RunRecordHandle`, not on this service. Binding the
    * runId here keeps every call site from re-threading it.
@@ -54,6 +70,8 @@ export class WorkflowRunService {
         this.patch(runId, { currentStep: step }),
       saveResearchContext: (research: ResearchResult) =>
         this.patch(runId, { researchContext: research }),
+      getLatestCompletedResearch: (artifactId: string) =>
+        this.getLatestCompletedResearch(artifactId),
       complete: (creditsUsed: number) =>
         this.patch(runId, { status: RunStatus.COMPLETED, creditsUsed }),
       fail: (failureReason: string) =>
