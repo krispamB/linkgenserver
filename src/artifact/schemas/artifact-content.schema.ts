@@ -1,5 +1,6 @@
 import { z } from 'zod';
-import { ArtifactType } from 'src/database/schemas';
+import { ArtifactType, CarouselTheme } from 'src/database/schemas';
+import { slidesSchema } from '../../carousel/schemas';
 import { linkedInCharCount } from '../utils/linkedin-char-count.util';
 
 export const LINKEDIN_MAX_POST_CHARS = 3000;
@@ -73,15 +74,36 @@ export const pollContentSchema = z.object({
 
 export type PollContent = z.infer<typeof pollContentSchema>;
 
-// Discriminated on the artifact's family-level `type`; grows a DOCUMENT arm in a
-// later slice (#122).
-export type ArtifactContent = PostContent | PollContent;
+// DOCUMENT — a carousel deck, optionally introduced by commentary. `slides` is
+// the editable source of truth authored by GENERATE; the PDF is the disposable
+// derived output. `pdfKey`/`pageCount` are therefore optional here: GENERATE
+// emits the slides-only shape, and PERSIST_VERSION folds RENDER_PDF's output in.
+// `templateId` reuses the deck-level `CarouselTheme` (its look), distinct from
+// `stylePreset` (voice) which shapes the slide copy (R4). `slides` reuses the one
+// carousel Zod contract, so the union, the generation contract, and the four
+// themes validate the same shape.
+export const documentContentSchema = z.object({
+  commentary: commentarySchema.optional(),
+  document: z.object({
+    templateId: z.enum(CarouselTheme),
+    slides: slidesSchema,
+    pdfKey: z.string().min(1).optional(),
+    pageCount: z.number().int().positive().optional(),
+  }),
+});
+
+export type DocumentContent = z.infer<typeof documentContentSchema>;
+
+// Discriminated on the artifact's family-level `type`. POST/POLL carry text
+// only; DOCUMENT adds the derived-PDF-backed carousel deck.
+export type ArtifactContent = PostContent | PollContent | DocumentContent;
 
 const contentSchemaByType: Partial<
   Record<ArtifactType, z.ZodType<ArtifactContent>>
 > = {
   [ArtifactType.POST]: postContentSchema,
   [ArtifactType.POLL]: pollContentSchema,
+  [ArtifactType.DOCUMENT]: documentContentSchema,
 };
 
 /**

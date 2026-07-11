@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { ArtifactType } from 'src/database/schemas';
 import { ArtifactContent, contentSchemaFor } from '../artifact/schemas';
 import { LLMProvider, MessageRole } from '../llm/interfaces';
 import type {
@@ -236,7 +237,7 @@ export class AgentRunnerService implements AgentRunner {
 
     let validationError: unknown;
     try {
-      return this.parser.parseWithSchema(draft, schema);
+      return this.stampTheme(this.parser.parseWithSchema(draft, schema), input);
     } catch (error: unknown) {
       validationError = error;
     }
@@ -258,13 +259,40 @@ export class AgentRunnerService implements AgentRunner {
     );
 
     try {
-      return this.parser.parseWithSchema(repaired, schema);
+      return this.stampTheme(
+        this.parser.parseWithSchema(repaired, schema),
+        input,
+      );
     } catch (error: unknown) {
       throw new ContentValidationError(
         `Generated ${input.type} content failed validation after one repair retry: ${describeError(error)}`,
         { cause: error },
       );
     }
+  }
+
+  /**
+   * A user-supplied `theme` is authoritative: it overrides whatever templateId
+   * the model chose, so a document keeps the user's chosen look across the
+   * initial run and every later refine (R4). Applied after validation, so it is
+   * a stamp over already-valid content — not a chance to sneak a bad theme past
+   * Zod. With no theme, the model's own validated pick stands.
+   */
+  private stampTheme(
+    content: ArtifactContent,
+    input: GenerateInput,
+  ): ArtifactContent {
+    if (
+      input.type !== ArtifactType.DOCUMENT ||
+      !input.theme ||
+      !('document' in content)
+    ) {
+      return content;
+    }
+    return {
+      ...content,
+      document: { ...content.document, templateId: input.theme },
+    };
   }
 
   /**

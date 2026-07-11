@@ -7,7 +7,12 @@ jest.mock(
   'src/database/schemas',
   () => ({
     ArtifactType: { POST: 'POST', POLL: 'POLL', DOCUMENT: 'DOCUMENT' },
-    CarouselTheme: { MINIMAL: 'minimal' },
+    CarouselTheme: {
+      BOLD: 'bold',
+      MINIMAL: 'minimal',
+      EDITORIAL: 'editorial',
+      GRADIENT: 'gradient',
+    },
   }),
   { virtual: true },
 );
@@ -322,15 +327,75 @@ describe('AgentRunnerService', () => {
       );
     });
 
-    it('should throw when no generation prompt exists for the artifact type', async () => {
-      await expect(
-        service.generate({
-          ...fixtures.input,
-          type: ArtifactType.DOCUMENT,
+    describe('DOCUMENT generation', () => {
+      // A valid slides-only deck the model returns; templateId varies per test.
+      const deckJson = (templateId: string) =>
+        JSON.stringify({
+          document: {
+            templateId,
+            slides: [
+              { type: 'cover', fields: { title: 'A carousel' } },
+              { type: 'content', fields: { heading: 'One', body: 'A point' } },
+            ],
+          },
+        });
+
+      const documentInput: GenerateInput = {
+        type: ArtifactType.DOCUMENT,
+        prompt: 'A carousel on staff engineering',
+      };
+
+      it('should parse and return the document deck the model produces', async () => {
+        mocks.llmService.complete.mockResolvedValue(
+          completion(deckJson('editorial')),
+        );
+
+        const content = await service.generate(documentInput);
+
+        expect(content).toMatchObject({
+          document: { templateId: 'editorial' },
+        });
+        expect(mocks.llmService.complete).toHaveBeenCalledTimes(1);
+      });
+
+      it('should keep the model-chosen theme when the user supplied none', async () => {
+        mocks.llmService.complete.mockResolvedValue(
+          completion(deckJson('gradient')),
+        );
+
+        const content = await service.generate(documentInput);
+
+        expect(content).toMatchObject({ document: { templateId: 'gradient' } });
+      });
+
+      it('should stamp the user-supplied theme over a different one the model picked', async () => {
+        // The model tries to pick "bold"; the user asked for "minimal".
+        mocks.llmService.complete.mockResolvedValue(
+          completion(deckJson('bold')),
+        );
+
+        const content = await service.generate({
+          ...documentInput,
           theme: CarouselTheme.MINIMAL,
-        }),
-      ).rejects.toThrow('DOCUMENT');
-      expect(mocks.llmService.complete).not.toHaveBeenCalled();
+        });
+
+        expect(content).toMatchObject({ document: { templateId: 'minimal' } });
+      });
+
+      it('should instruct the model to use the stamped theme in the user prompt', async () => {
+        mocks.llmService.complete.mockResolvedValue(
+          completion(deckJson('minimal')),
+        );
+
+        await service.generate({
+          ...documentInput,
+          theme: CarouselTheme.MINIMAL,
+        });
+
+        const [, user] = messagesOfCall(1);
+        expect(user.content).toContain('THEME:');
+        expect(user.content).toContain('minimal');
+      });
     });
   });
 

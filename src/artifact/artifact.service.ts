@@ -13,7 +13,11 @@ import {
   CurrentVersionRead,
   VersionRender,
 } from './artifact-writer.interface';
-import { ArtifactContent, parseArtifactContent } from './schemas';
+import {
+  ArtifactContent,
+  DocumentContent,
+  parseArtifactContent,
+} from './schemas';
 
 export interface CreateArtifactInput {
   type: ArtifactType;
@@ -60,10 +64,21 @@ export class ArtifactService implements ArtifactWriter {
       );
     }
 
-    // Folding render.pdfKey/pageCount into content.document arrives with the
-    // DOCUMENT arm (#122); the POST arm has no document object to fold into.
-    void render;
-    const parsed = parseArtifactContent(artifact.type, content);
+    // For a DOCUMENT, fold RENDER_PDF's derived output onto the slides-only
+    // content GENERATE produced; POST/POLL carry no document to fold into.
+    const folded = this.foldRender(artifact.type, content, render);
+    const parsed = parseArtifactContent(artifact.type, folded);
+
+    // RENDER_PDF is what gates READY for a document: without a rendered pdfKey the
+    // deck has no preview, so this flip would publish a half-built version.
+    if (
+      artifact.type === ArtifactType.DOCUMENT &&
+      !(parsed as DocumentContent).document.pdfKey
+    ) {
+      throw new Error(
+        `Cannot mark document ${artifactId} v${version} READY without a rendered pdfKey`,
+      );
+    }
 
     // The write targets the fixed (artifactId, version), so a whole-job retry
     // overwrites rather than appends.
@@ -120,6 +135,29 @@ export class ArtifactService implements ArtifactWriter {
       type: artifact.type,
       version: current.version,
       content: current.content as ArtifactContent,
+    };
+  }
+
+  /**
+   * Folds RENDER_PDF's `pdfKey`/`pageCount` onto a document's slides-only
+   * content. A no-op for POST/POLL (no document object) and for a document
+   * reached without a render (the gate below rejects that separately).
+   */
+  private foldRender(
+    type: ArtifactType,
+    content: ArtifactContent,
+    render?: VersionRender,
+  ): ArtifactContent {
+    if (type !== ArtifactType.DOCUMENT || !render || !('document' in content)) {
+      return content;
+    }
+    return {
+      ...content,
+      document: {
+        ...content.document,
+        pdfKey: render.pdfKey,
+        pageCount: render.pageCount,
+      },
     };
   }
 
