@@ -2,6 +2,12 @@ jest.mock(
   'src/database/schemas',
   () => ({
     ArtifactType: { POST: 'POST', POLL: 'POLL', DOCUMENT: 'DOCUMENT' },
+    CarouselTheme: {
+      BOLD: 'bold',
+      MINIMAL: 'minimal',
+      EDITORIAL: 'editorial',
+      GRADIENT: 'gradient',
+    },
   }),
   { virtual: true },
 );
@@ -308,11 +314,84 @@ describe('parseArtifactContent', () => {
     });
   });
 
-  describe('unimplemented arms', () => {
-    it('should throw when no content schema exists for the artifact type', () => {
+  describe('DOCUMENT arm', () => {
+    // The slides-only shape GENERATE emits: templateId + a valid deck, with no
+    // pdfKey/pageCount yet (those are RENDER_PDF's derived output).
+    const slidesOnlyDocument = () => ({
+      document: {
+        templateId: 'minimal',
+        slides: [
+          { type: 'cover', fields: { title: 'A carousel' } },
+          { type: 'content', fields: { heading: 'One', body: 'A point' } },
+        ],
+      },
+    });
+
+    it('should accept the slides-only document GENERATE emits', () => {
+      const content = slidesOnlyDocument();
+      expect(parseArtifactContent(ArtifactType.DOCUMENT, content)).toEqual(
+        content,
+      );
+    });
+
+    it('should accept optional framing commentary alongside the deck', () => {
+      const content = { commentary: 'A thread 🧵', ...slidesOnlyDocument() };
+      expect(parseArtifactContent(ArtifactType.DOCUMENT, content)).toEqual(
+        content,
+      );
+    });
+
+    it('should accept the folded form carrying pdfKey and pageCount', () => {
+      const base = slidesOnlyDocument();
+      const folded = {
+        document: {
+          ...base.document,
+          pdfKey: 'artifacts/abc/1/document.pdf',
+          pageCount: 2,
+        },
+      };
+      expect(parseArtifactContent(ArtifactType.DOCUMENT, folded)).toEqual(
+        folded,
+      );
+    });
+
+    it('should reject a templateId that is not a real CarouselTheme', () => {
+      const content = slidesOnlyDocument();
+      content.document.templateId = 'neon';
       expect(() =>
-        parseArtifactContent(ArtifactType.DOCUMENT, { commentary: 'x' }),
-      ).toThrow('No content schema implemented for artifact type DOCUMENT');
+        parseArtifactContent(ArtifactType.DOCUMENT, content),
+      ).toThrow(ZodError);
+    });
+
+    it('should reject a deck with fewer than two slides', () => {
+      const content = slidesOnlyDocument();
+      content.document.slides = [content.document.slides[0]];
+      expect(() =>
+        parseArtifactContent(ArtifactType.DOCUMENT, content),
+      ).toThrow(ZodError);
+    });
+
+    it('should reject a slide whose type is not a known slide role', () => {
+      const content = {
+        document: {
+          templateId: 'minimal',
+          slides: [
+            { type: 'cover', fields: { title: 'A carousel' } },
+            { type: 'banner', fields: { heading: 'One', body: 'A point' } },
+          ],
+        },
+      };
+      expect(() =>
+        parseArtifactContent(ArtifactType.DOCUMENT, content),
+      ).toThrow(ZodError);
+    });
+
+    it('should reject content that has no document object', () => {
+      expect(() =>
+        parseArtifactContent(ArtifactType.DOCUMENT, {
+          commentary: 'just text',
+        }),
+      ).toThrow(ZodError);
     });
   });
 });

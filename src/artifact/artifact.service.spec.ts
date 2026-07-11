@@ -19,8 +19,13 @@ jest.mock(
 );
 
 import { Types } from 'mongoose';
-import { ArtifactType, VersionStatus } from 'src/database/schemas';
+import {
+  ArtifactType,
+  CarouselTheme,
+  VersionStatus,
+} from 'src/database/schemas';
 import { StylePreset } from '../agent/style-presets.config';
+import type { ArtifactContent } from './schemas';
 import { ArtifactService } from './artifact.service';
 
 const makeService = () => {
@@ -103,6 +108,23 @@ describe('ArtifactService', () => {
       versions: [{ version: 1, status: VersionStatus.GENERATING, content: {} }],
     });
 
+    const generatingDocument = () => ({
+      _id: fixtures.artifactId,
+      type: ArtifactType.DOCUMENT,
+      versions: [{ version: 1, status: VersionStatus.GENERATING, content: {} }],
+    });
+
+    // The slides-only shape GENERATE writes into state.content — no pdfKey yet.
+    const slidesOnlyDocument = (): ArtifactContent => ({
+      document: {
+        templateId: CarouselTheme.MINIMAL,
+        slides: [
+          { type: 'cover', fields: { title: 'A carousel' } },
+          { type: 'content', fields: { heading: 'One', body: 'A point' } },
+        ],
+      },
+    });
+
     it('should validate the content and flip the version to READY when the version exists', async () => {
       mocks.artifactModel.findById.mockResolvedValue(generatingArtifact());
 
@@ -151,6 +173,51 @@ describe('ArtifactService', () => {
           },
         },
       );
+    });
+
+    it('should fold the render pdfKey and pageCount into the document before flipping READY', async () => {
+      mocks.artifactModel.findById.mockResolvedValue(generatingDocument());
+
+      await service.setVersionContent(
+        fixtures.artifactId,
+        1,
+        slidesOnlyDocument(),
+        { pdfKey: 'artifacts/abc/1/document.pdf', pageCount: 2 },
+      );
+
+      expect(mocks.artifactModel.updateOne).toHaveBeenCalledWith(
+        { _id: fixtures.artifactId, 'versions.version': 1 },
+        {
+          $set: {
+            'versions.$.content': {
+              document: {
+                templateId: 'minimal',
+                slides: [
+                  { type: 'cover', fields: { title: 'A carousel' } },
+                  {
+                    type: 'content',
+                    fields: { heading: 'One', body: 'A point' },
+                  },
+                ],
+                pdfKey: 'artifacts/abc/1/document.pdf',
+                pageCount: 2,
+              },
+            },
+            'versions.$.status': VersionStatus.READY,
+          },
+        },
+      );
+    });
+
+    it('should refuse to flip a document READY when no render pdfKey has been produced', async () => {
+      mocks.artifactModel.findById.mockResolvedValue(generatingDocument());
+
+      // RENDER_PDF gates READY for documents; reaching PERSIST_VERSION without a
+      // render is a wiring bug, never a healthy state to persist.
+      await expect(
+        service.setVersionContent(fixtures.artifactId, 1, slidesOnlyDocument()),
+      ).rejects.toThrow(/pdfKey/i);
+      expect(mocks.artifactModel.updateOne).not.toHaveBeenCalled();
     });
 
     it('should throw NotFoundException when the artifact does not exist', async () => {
