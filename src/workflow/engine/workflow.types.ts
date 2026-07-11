@@ -65,7 +65,7 @@ export type StepHandler = (
 
 export type StepHandlerMap = Partial<Record<WorkflowStep, StepHandler>>;
 
-/** DOCUMENT-only. `CarouselRendererService` implements it in #122. */
+/** DOCUMENT-only. `CarouselRendererService` (#121) consumes it. */
 export interface CarouselRenderInput {
   artifactId: string;
   version: number;
