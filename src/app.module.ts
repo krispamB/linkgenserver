@@ -30,6 +30,7 @@ import { OnboardingModule } from './onboarding';
 import { DiagnosticsModule } from './diagnostics/diagnostics.module';
 import { MarkModule } from './mark';
 import { ArtifactModule } from './artifact';
+import { CarouselModule } from './carousel';
 
 @Module({
   imports: [
@@ -58,6 +59,7 @@ import { ArtifactModule } from './artifact';
     DiagnosticsModule,
     MarkModule,
     ArtifactModule,
+    CarouselModule,
   ],
   controllers: [AppController],
   providers: [AppService],

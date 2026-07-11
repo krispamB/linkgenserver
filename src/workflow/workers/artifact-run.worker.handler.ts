@@ -10,7 +10,7 @@ import {
 } from '../engine/run-event.emitter';
 import type { EmittedEvent } from '../engine/run-event.types';
 import { handleTerminalFailure, runWorkflow } from '../engine/workflow.engine';
-import { describeError, terminal } from '../engine/workflow.error';
+import { describeError } from '../engine/workflow.error';
 import type {
   BuildInput,
   CarouselRenderer,
@@ -18,16 +18,6 @@ import type {
   StepContext,
 } from '../engine/workflow.types';
 import { artifactStepHandlers } from '../steps';
-
-/**
- * `RENDER_PDF` has no step handler until the carousel slice, so the engine fails
- * a DOCUMENT run before it ever reaches this. It exists to satisfy `StepContext`,
- * and throws terminally rather than pretending to render.
- */
-export const unimplementedRenderer: CarouselRenderer = {
-  render: () =>
-    Promise.reject(terminal('Carousel rendering is not implemented yet')),
-};
 
 /** The narrow slice of `WorkflowRunService` the worker needs. */
 export interface RunRecordStore {

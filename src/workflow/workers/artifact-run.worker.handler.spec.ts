@@ -16,8 +16,10 @@ import type { BuildInput } from '../engine/workflow.types';
 import {
   ArtifactRunProcessor,
   isTerminalJobFailure,
-  unimplementedRenderer,
 } from './artifact-run.worker.handler';
+
+// These POST-run tests never reach RENDER_PDF, so a never-called stub suffices.
+const stubRenderer = { render: jest.fn() };
 
 const buildInput = (): BuildInput =>
   ({
@@ -79,7 +81,7 @@ const makeProcessor = () => {
   const processor = new ArtifactRunProcessor({
     agent: agent as any,
     artifacts: artifacts as any,
-    renderer: unimplementedRenderer,
+    renderer: stubRenderer as any,
     creditMeter: creditMeter as any,
     runs: runs as any,
     redis: redis as any,
@@ -262,18 +264,5 @@ describe('ArtifactRunProcessor', () => {
       expect(mocks.runHandle.fail).not.toHaveBeenCalled();
       expect(mocks.logger.error).toHaveBeenCalled();
     });
-  });
-});
-
-describe('unimplementedRenderer', () => {
-  it('should reject terminally rather than pretend to render', async () => {
-    await expect(
-      unimplementedRenderer.render({
-        artifactId: 'artifact-1',
-        version: 1,
-        templateId: 'minimal' as never,
-        slides: [],
-      }),
-    ).rejects.toMatchObject({ retryable: false });
   });
 });

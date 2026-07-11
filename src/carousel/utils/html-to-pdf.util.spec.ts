@@ -1,4 +1,4 @@
-import { htmlToPdf } from './html_to_pdf.util';
+import { htmlToPdf } from './html-to-pdf.util';
 
 const mockPdfData = new Uint8Array([37, 80, 68, 70]); // %PDF magic bytes
 

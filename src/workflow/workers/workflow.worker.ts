@@ -24,12 +24,10 @@ import {
   handleMediaUploadJobExhausted,
   processMediaUploadJob,
 } from './media-upload.worker.handler';
-import {
-  ArtifactRunProcessor,
-  unimplementedRenderer,
-} from './artifact-run.worker.handler';
+import { ArtifactRunProcessor } from './artifact-run.worker.handler';
 import { AgentRunnerService } from '../../agent/agent-runner.service';
 import { ArtifactService } from '../../artifact/artifact.service';
+import { CarouselRendererService } from '../../carousel';
 import { CreditMeterService } from '../../feature-gating/credit-meter.service';
 import { RedisService } from '../../redis/redis.service';
 import { WorkflowRunService } from '../workflow-run.service';
@@ -57,7 +55,7 @@ async function bootstrapWorker() {
   const artifactRuns = new ArtifactRunProcessor({
     agent: app.get(AgentRunnerService),
     artifacts: app.get(ArtifactService),
-    renderer: unimplementedRenderer,
+    renderer: app.get(CarouselRendererService),
     creditMeter: app.get(CreditMeterService),
     runs: app.get(WorkflowRunService),
     redis: app.get(RedisService).getClient(),
