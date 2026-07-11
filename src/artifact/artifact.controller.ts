@@ -3,6 +3,7 @@ import {
   Controller,
   HttpCode,
   HttpStatus,
+  Param,
   Post,
   UseGuards,
 } from '@nestjs/common';
@@ -14,8 +15,9 @@ import { User } from '../database/schemas';
 import {
   ArtifactGenerationService,
   LaunchResult,
+  RefineLaunchResult,
 } from './artifact-generation.service';
-import { CreateArtifactDto } from './dto';
+import { CreateArtifactDto, RefineArtifactDto } from './dto';
 
 @UseGuards(ClerkAuthGuard)
 @Controller('artifacts')
@@ -34,5 +36,19 @@ export class ArtifactController {
     @Body() dto: CreateArtifactDto,
   ): Promise<LaunchResult> {
     return this.generation.launchInitialRun(user._id.toString(), dto);
+  }
+
+  @HttpCode(HttpStatus.ACCEPTED)
+  @Post(':id/refine')
+  refine(
+    @GetUser() user: User,
+    @Param('id') artifactId: string,
+    @Body() dto: RefineArtifactDto,
+  ): Promise<RefineLaunchResult> {
+    return this.generation.launchRefineRun(
+      user._id.toString(),
+      artifactId,
+      dto.feedback,
+    );
   }
 }

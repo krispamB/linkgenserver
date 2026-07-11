@@ -31,6 +31,7 @@ import { ArtifactService } from './artifact.service';
 const makeService = () => {
   const artifactModel = {
     create: jest.fn(),
+    findOne: jest.fn(),
     findById: jest.fn(),
     updateOne: jest.fn().mockResolvedValue({ matchedCount: 1 }),
   };
@@ -98,6 +99,272 @@ describe('ArtifactService', () => {
           },
         }),
       );
+    });
+  });
+
+  describe('appendRefineVersion', () => {
+    const readyArtifact = () => ({
+      _id: fixtures.artifactId,
+      type: ArtifactType.POST,
+      currentVersion: 1,
+      source: {
+        prompt: 'Write about TDD',
+        withResearch: true,
+        stylePreset: StylePreset.EDUCATIONAL,
+      },
+      versions: [
+        {
+          version: 1,
+          status: VersionStatus.READY,
+          content: { commentary: 'The original post.' },
+        },
+      ],
+    });
+
+    it('should append a GENERATING version and move the head forward when refining a ready artifact', async () => {
+      mocks.artifactModel.findOne.mockResolvedValue(readyArtifact());
+
+      await expect(
+        service.appendRefineVersion(
+          fixtures.userId,
+          fixtures.artifactId,
+          'Make the hook sharper',
+        ),
+      ).resolves.toEqual({
+        version: 2,
+        type: ArtifactType.POST,
+        prompt: 'Write about TDD',
+        withResearch: true,
+        stylePreset: StylePreset.EDUCATIONAL,
+      });
+
+      expect(mocks.artifactModel.findOne).toHaveBeenCalledWith({
+        _id: fixtures.artifactId,
+        user: expect.any(Types.ObjectId),
+      });
+      expect(mocks.artifactModel.updateOne).toHaveBeenCalledWith(
+        {
+          _id: fixtures.artifactId,
+          user: expect.any(Types.ObjectId),
+          currentVersion: 1,
+        },
+        {
+          $set: { currentVersion: 2 },
+          $push: {
+            versions: {
+              version: 2,
+              status: VersionStatus.GENERATING,
+              content: {},
+              refineFeedback: 'Make the hook sharper',
+            },
+          },
+        },
+      );
+    });
+
+    it('should carry the document theme into the refine input when the user supplied one', async () => {
+      mocks.artifactModel.findOne.mockResolvedValue({
+        ...readyArtifact(),
+        type: ArtifactType.DOCUMENT,
+        source: {
+          prompt: 'Build a carousel',
+          withResearch: false,
+          theme: CarouselTheme.MINIMAL,
+        },
+      });
+
+      await expect(
+        service.appendRefineVersion(
+          fixtures.userId,
+          fixtures.artifactId,
+          'Use fewer words',
+        ),
+      ).resolves.toMatchObject({
+        type: ArtifactType.DOCUMENT,
+        prompt: 'Build a carousel',
+        withResearch: false,
+        theme: CarouselTheme.MINIMAL,
+      });
+    });
+
+    it('should carry a model-selected document theme into the refine input when the source has none', async () => {
+      mocks.artifactModel.findOne.mockResolvedValue({
+        ...readyArtifact(),
+        type: ArtifactType.DOCUMENT,
+        source: {
+          prompt: 'Build a carousel',
+          withResearch: false,
+        },
+        versions: [
+          {
+            version: 1,
+            status: VersionStatus.READY,
+            content: {
+              document: {
+                templateId: CarouselTheme.GRADIENT,
+                slides: [
+                  { type: 'cover', fields: { title: 'A carousel' } },
+                  { type: 'content', fields: { heading: 'A', body: 'B' } },
+                ],
+              },
+            },
+          },
+        ],
+      });
+
+      await expect(
+        service.appendRefineVersion(
+          fixtures.userId,
+          fixtures.artifactId,
+          'Use fewer words',
+        ),
+      ).resolves.toMatchObject({ theme: CarouselTheme.GRADIENT });
+    });
+
+    it('should reject an unknown or soft-deleted artifact when appending a version', async () => {
+      mocks.artifactModel.findOne.mockResolvedValue(null);
+
+      await expect(
+        service.appendRefineVersion(
+          fixtures.userId,
+          fixtures.artifactId,
+          'Try again',
+        ),
+      ).rejects.toMatchObject({ name: 'NotFoundException' });
+
+      mocks.artifactModel.findOne.mockResolvedValue({
+        ...readyArtifact(),
+        deletedAt: new Date(),
+      });
+
+      await expect(
+        service.appendRefineVersion(
+          fixtures.userId,
+          fixtures.artifactId,
+          'Try again',
+        ),
+      ).rejects.toMatchObject({ name: 'NotFoundException' });
+      expect(mocks.artifactModel.updateOne).not.toHaveBeenCalled();
+    });
+
+    it('should reject a concurrent head change when appending a version', async () => {
+      mocks.artifactModel.findOne.mockResolvedValue(readyArtifact());
+      mocks.artifactModel.updateOne.mockResolvedValue({ matchedCount: 0 });
+
+      await expect(
+        service.appendRefineVersion(
+          fixtures.userId,
+          fixtures.artifactId,
+          'Try again',
+        ),
+      ).rejects.toMatchObject({ name: 'ConflictException' });
+    });
+
+    it('should reject a refine when the current version is still generating', async () => {
+      mocks.artifactModel.findOne.mockResolvedValue({
+        ...readyArtifact(),
+        versions: [
+          {
+            version: 1,
+            status: VersionStatus.GENERATING,
+            content: {},
+          },
+        ],
+      });
+
+      await expect(
+        service.appendRefineVersion(
+          fixtures.userId,
+          fixtures.artifactId,
+          'Try again',
+        ),
+      ).rejects.toMatchObject({ name: 'ConflictException' });
+      expect(mocks.artifactModel.updateOne).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('readRefineInput', () => {
+    it('should return the prior version content and feedback when the target version is refining', async () => {
+      mocks.artifactModel.findById.mockResolvedValue({
+        _id: fixtures.artifactId,
+        type: ArtifactType.POST,
+        currentVersion: 2,
+        versions: [
+          {
+            version: 1,
+            status: VersionStatus.READY,
+            content: { commentary: 'The original post.' },
+          },
+          {
+            version: 2,
+            status: VersionStatus.GENERATING,
+            content: {},
+            refineFeedback: 'Make the hook sharper',
+          },
+        ],
+      });
+
+      await expect(
+        service.readRefineInput(fixtures.artifactId, 2),
+      ).resolves.toEqual({
+        priorContent: { commentary: 'The original post.' },
+        feedback: 'Make the hook sharper',
+      });
+    });
+
+    it('should reject when the target has no usable prior version for refinement', async () => {
+      mocks.artifactModel.findById.mockResolvedValue({
+        _id: fixtures.artifactId,
+        type: ArtifactType.POST,
+        currentVersion: 2,
+        versions: [
+          {
+            version: 2,
+            status: VersionStatus.GENERATING,
+            content: {},
+            refineFeedback: 'Try again',
+          },
+        ],
+      });
+
+      await expect(
+        service.readRefineInput(fixtures.artifactId, 2),
+      ).rejects.toMatchObject({ name: 'NotFoundException' });
+    });
+
+    it('should skip failed versions when finding the latest earlier usable content', async () => {
+      mocks.artifactModel.findById.mockResolvedValue({
+        _id: fixtures.artifactId,
+        type: ArtifactType.POST,
+        currentVersion: 3,
+        versions: [
+          {
+            version: 1,
+            status: VersionStatus.READY,
+            content: { commentary: 'The original post.' },
+          },
+          {
+            version: 2,
+            status: VersionStatus.FAILED,
+            content: {},
+            failureReason: 'generation failed',
+            refineFeedback: 'Make the hook sharper',
+          },
+          {
+            version: 3,
+            status: VersionStatus.GENERATING,
+            content: {},
+            refineFeedback: 'Try a more direct opening',
+          },
+        ],
+      });
+
+      await expect(
+        service.readRefineInput(fixtures.artifactId, 3),
+      ).resolves.toEqual({
+        priorContent: { commentary: 'The original post.' },
+        feedback: 'Try a more direct opening',
+      });
     });
   });
 

@@ -1,4 +1,5 @@
 import { NotFoundException } from '@nestjs/common';
+import { RunKind } from '../../database/schemas';
 import { terminal } from '../engine/workflow.error';
 import type { StepHandler } from '../engine/workflow.types';
 
@@ -35,5 +36,24 @@ export const resolveInputStep: StepHandler = async (state, ctx) => {
     );
   }
 
-  return {};
+  if (state.input.kind !== RunKind.REFINE) {
+    return {};
+  }
+
+  let refine: Awaited<ReturnType<typeof ctx.artifacts.readRefineInput>>;
+  try {
+    refine = await ctx.artifacts.readRefineInput(artifactId, version);
+  } catch (error: unknown) {
+    if (error instanceof NotFoundException) {
+      throw terminal(error.message, error);
+    }
+    throw error;
+  }
+
+  const research = await ctx.run.getLatestCompletedResearch(artifactId);
+
+  return {
+    refine,
+    ...(research ? { research } : {}),
+  };
 };

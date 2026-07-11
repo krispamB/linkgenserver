@@ -1,4 +1,8 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  ConflictException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import {
@@ -11,6 +15,7 @@ import type { StylePreset } from 'src/agent/style-presets.config';
 import {
   ArtifactWriter,
   CurrentVersionRead,
+  RefineContext,
   VersionRender,
 } from './artifact-writer.interface';
 import {
@@ -19,12 +24,20 @@ import {
   parseArtifactContent,
 } from './schemas';
 
-export interface CreateArtifactInput {
-  type: ArtifactType;
+export interface ArtifactSourceInput {
   prompt: string;
   withResearch: boolean;
   stylePreset?: StylePreset;
   theme?: CarouselTheme;
+}
+
+export interface CreateArtifactInput extends ArtifactSourceInput {
+  type: ArtifactType;
+}
+
+export interface RefineArtifactInput extends ArtifactSourceInput {
+  version: number;
+  type: ArtifactType;
 }
 
 @Injectable()
@@ -49,6 +62,99 @@ export class ArtifactService implements ArtifactWriter {
       currentVersion: 1,
       versions: [{ version: 1, status: VersionStatus.GENERATING, content: {} }],
     });
+  }
+
+  async appendRefineVersion(
+    userId: string,
+    artifactId: string,
+    feedback: string,
+  ): Promise<RefineArtifactInput> {
+    const user = new Types.ObjectId(userId);
+    const artifact = await this.artifactModel.findOne({
+      _id: artifactId,
+      user,
+    });
+
+    if (!artifact || artifact.deletedAt) {
+      throw new NotFoundException(`Artifact ${artifactId} not found`);
+    }
+
+    const current = artifact.versions.find(
+      (item) => item.version === artifact.currentVersion,
+    );
+    if (!current || current.status === VersionStatus.GENERATING) {
+      throw new ConflictException(
+        `Artifact ${artifactId} is still generating and cannot be refined`,
+      );
+    }
+
+    const priorContent = this.findLatestUsableContent(
+      artifact,
+      artifact.currentVersion + 1,
+    );
+    let theme = artifact.source.theme;
+    if (
+      !theme &&
+      artifact.type === ArtifactType.DOCUMENT &&
+      priorContent &&
+      'document' in priorContent
+    ) {
+      theme = priorContent.document.templateId;
+    }
+
+    const nextVersion = artifact.currentVersion + 1;
+    const result = await this.artifactModel.updateOne(
+      {
+        _id: artifact._id,
+        user,
+        currentVersion: artifact.currentVersion,
+      },
+      {
+        $set: { currentVersion: nextVersion },
+        $push: {
+          versions: {
+            version: nextVersion,
+            status: VersionStatus.GENERATING,
+            content: {},
+            refineFeedback: feedback,
+          },
+        },
+      },
+    );
+
+    if (result.matchedCount !== 1) {
+      throw new ConflictException(
+        `Artifact ${artifactId} changed while a refine was being started`,
+      );
+    }
+
+    return {
+      version: nextVersion,
+      type: artifact.type,
+      prompt: artifact.source.prompt,
+      withResearch: artifact.source.withResearch,
+      ...(artifact.source.stylePreset
+        ? { stylePreset: artifact.source.stylePreset }
+        : {}),
+      ...(theme ? { theme } : {}),
+    };
+  }
+
+  async readRefineInput(
+    artifactId: string,
+    version: number,
+  ): Promise<RefineContext> {
+    const artifact = await this.getLiveArtifact(artifactId);
+    const target = artifact.versions.find((item) => item.version === version);
+    const priorContent = this.findLatestUsableContent(artifact, version);
+
+    if (!target || target.refineFeedback == null || !priorContent) {
+      throw new NotFoundException(
+        `Refine input for artifact ${artifactId} v${version} not found`,
+      );
+    }
+
+    return { priorContent, feedback: target.refineFeedback };
   }
 
   async setVersionContent(
@@ -159,6 +265,26 @@ export class ArtifactService implements ArtifactWriter {
         pageCount: render.pageCount,
       },
     };
+  }
+
+  private findLatestUsableContent(
+    artifact: Artifact,
+    beforeVersion: number,
+  ): ArtifactContent | undefined {
+    const versions = [...artifact.versions]
+      .filter((version) => version.version < beforeVersion)
+      .sort((a, b) => b.version - a.version);
+
+    for (const version of versions) {
+      try {
+        return parseArtifactContent(artifact.type, version.content);
+      } catch {
+        // Failed versions can retain an empty content object. Keep walking back
+        // so a later refine can still revise the last usable version.
+      }
+    }
+
+    return undefined;
   }
 
   private async getLiveArtifact(artifactId: string): Promise<Artifact> {

@@ -23,6 +23,7 @@ describe('WorkflowRunService', () => {
       create: jest.fn(),
       updateOne: jest.fn().mockResolvedValue({ matchedCount: 1 }),
       findById: jest.fn(),
+      findOne: jest.fn(),
     };
     const service = new WorkflowRunService(workflowRunModel as any);
 
@@ -93,6 +94,44 @@ describe('WorkflowRunService', () => {
     it('should return null without touching the model for a malformed id', async () => {
       await expect(service.getRun('not-an-object-id')).resolves.toBeNull();
       expect(mocks.workflowRunModel.findById).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('getLatestCompletedResearch', () => {
+    it('should return cached research from the latest completed run when one exists', async () => {
+      const research = {
+        findings: 'cached findings',
+        sources: [{ title: 'Source', url: 'https://example.com' }],
+      };
+      const sort = jest.fn().mockResolvedValue({ researchContext: research });
+      mocks.workflowRunModel.findOne.mockReturnValue({ sort });
+
+      await expect(
+        service.getLatestCompletedResearch(fixtures.artifactId),
+      ).resolves.toEqual(research);
+
+      expect(mocks.workflowRunModel.findOne).toHaveBeenCalledWith({
+        artifact: expect.any(Types.ObjectId),
+        status: RunStatus.COMPLETED,
+        researchContext: { $exists: true },
+      });
+      expect(sort).toHaveBeenCalledWith({ createdAt: -1 });
+    });
+
+    it('should return undefined when the artifact has no cached research', async () => {
+      const sort = jest.fn().mockResolvedValue(null);
+      mocks.workflowRunModel.findOne.mockReturnValue({ sort });
+
+      await expect(
+        service.getLatestCompletedResearch(fixtures.artifactId),
+      ).resolves.toBeUndefined();
+    });
+
+    it('should not query when the artifact id is malformed', async () => {
+      await expect(
+        service.getLatestCompletedResearch('not-an-object-id'),
+      ).resolves.toBeUndefined();
+      expect(mocks.workflowRunModel.findOne).not.toHaveBeenCalled();
     });
   });
 
