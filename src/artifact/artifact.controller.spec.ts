@@ -19,10 +19,18 @@ jest.mock(
   { virtual: true },
 );
 jest.mock(
+  './artifact.service',
+  () => ({ ArtifactService: class ArtifactService {} }),
+  { virtual: true },
+);
+jest.mock(
   './dto',
   () => ({
     CreateArtifactDto: class CreateArtifactDto {},
+    GetArtifactQueryDto: class GetArtifactQueryDto {},
+    ListArtifactsQueryDto: class ListArtifactsQueryDto {},
     RefineArtifactDto: class RefineArtifactDto {},
+    UpdateArtifactDto: class UpdateArtifactDto {},
   }),
   { virtual: true },
 );
@@ -39,7 +47,7 @@ describe('ArtifactController', () => {
           runId: 'run-2',
         }),
       };
-      const controller = new ArtifactController(generation as any);
+      const controller = new ArtifactController(generation as any, {} as any);
       const user = { _id: { toString: () => 'user-1' } };
 
       await expect(
@@ -57,6 +65,36 @@ describe('ArtifactController', () => {
         'artifact-1',
         'Make the hook sharper',
       );
+    });
+  });
+
+  describe('library routes', () => {
+    it('returns list data and filter/page metadata', async () => {
+      const library = {
+        listArtifacts: jest.fn().mockResolvedValue({
+          data: [{ id: 'artifact-1' }],
+          filters: { availableMonths: ['2026-07'], types: ['POST'] },
+          page: 1,
+          pages: 1,
+        }),
+      };
+      const controller = new ArtifactController(
+        { launchInitialRun: jest.fn() } as any,
+        library as any,
+      );
+
+      await expect(
+        controller.list(
+          { _id: { toString: () => 'user-1' } } as any,
+          { month: '2026-07', page: 1 } as any,
+        ),
+      ).resolves.toMatchObject({
+        statusCode: 200,
+        data: [{ id: 'artifact-1' }],
+        filters: { availableMonths: ['2026-07'], types: ['POST'] },
+        page: 1,
+        pages: 1,
+      });
     });
   });
 });
