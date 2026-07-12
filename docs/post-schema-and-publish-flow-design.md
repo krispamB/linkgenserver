@@ -274,7 +274,7 @@ seam is already there.
   `waitForDocumentAvailable`; `MediaType`/publish branch gains `DOCUMENT`.
 - **`auth.service`** disconnect logic re-pointed (H2/H8).
 - **No data migration** (drop `postdrafts`, flush Redis + R2 per #100 §0).
-- **Tests** (CLAUDE.md): `post.service.spec.ts` updated for the artifact-ref publish
+- **Tests** (AGENTS.md): `post.service.spec.ts` updated for the artifact-ref publish
   composition (POST/POLL/DOCUMENT → `IContent`), version pinning, immediate-vs-scheduled
   branch, disconnect→cancel; `linkedin-media.service.spec.ts` for `uploadDocument` (single
   PUT, no finalize). Manual construction + `makeService()` + `jest.mock(..., { virtual: true })`,

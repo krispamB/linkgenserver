@@ -1497,7 +1497,7 @@ leaves the tree green. `Blocked by` declares hard ordering.
 > `assertBalance` (headroom check); `incrementMarkTokenUsage` → `debit`. New
 > `CreditMeterService` with pure `toCredits` (llm/cost path + token fallback + warn). Update
 > `getDashboardUsage` to the `credits` shape. Config: `CREDITS_PER_USD`, `CREDIT_MARKUP`,
-> `FALLBACK_CREDITS_PER_1K_TOKENS`. Tests per CLAUDE.md: `credit-meter.service.spec.ts` and
+> `FALLBACK_CREDITS_PER_1K_TOKENS`. Tests per AGENTS.md: `credit-meter.service.spec.ts` and
 > an updated `feature-gating.service.spec.ts` (headroom guard, `-1`/`0` edges). *Blocked by:
 > none.*
 
@@ -1615,7 +1615,7 @@ usage.tick → run.completed`; the version is `READY`; credits are debited once.
 > `LinkedinMediaService.uploadDocument` — init → **single PUT** → `value.document` URN, **no
 > chunking, no ETags, no finalize** — plus `waitForDocumentAvailable`. Enforce ≤100 MB /
 > ≤300 pages. DOCUMENT publish sources bytes via `getFile(pdfKey)`. `MediaType` gains
-> `DOCUMENT`. Spec per CLAUDE.md: `linkedin-media.service.spec.ts` for the single-PUT path.
+> `DOCUMENT`. Spec per AGENTS.md: `linkedin-media.service.spec.ts` for the single-PUT path.
 > **Sandbox-verify the three §14 LinkedIn unknowns before merging.** *Blocked by: T14.*
 
 > **T16 — scheduling, cancel, and disconnect safety.**

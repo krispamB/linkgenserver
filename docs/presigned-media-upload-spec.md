@@ -182,7 +182,7 @@ In `publishOnLinkedIn`:
 | `src/post/dto/` | `InitiateMediaUploadDto` (`files[]`, class-validator: `@IsMimeType`-style allowlist, `@Max(200 MB)`, `@ArrayMaxSize(20)`), `CompleteMediaUploadDto` (`mediaIds[]`) |
 | `src/post/post.controller.ts` | two new JSON routes (no multer); old multipart route untouched |
 | `src/post/post.service.ts` | `initiateMediaUpload`, `completeMediaUpload`, shared `purgeExpiredPendingMedia(post)`; extend the in-progress checks; publish guard tweak |
-| `src/post/*.spec.ts`, `src/s3/s3.client.spec.ts` | specs for all of the above per CLAUDE.md conventions |
+| `src/post/*.spec.ts`, `src/s3/s3.client.spec.ts` | specs for all of the above per AGENTS.md conventions |
 
 Not touched: `media-upload.queue.ts`, `linkedin-media.service.ts`, the worker,
 the `FAILED`/retry semantics, `GET /posts/:id` polling contract.
