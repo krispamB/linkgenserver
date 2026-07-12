@@ -2,6 +2,20 @@
 
 This file provides guidance to Codex and other coding agents when working with code in this repository.
 
+## Documentation and decision documents
+
+The `docs/` folder contains architectural and product decision documents. When working on a task, inspect the filenames and search the folder for documents relevant to the area being changed, then read those documents before making decisions or edits.
+
+Do not load every document by default. Read only the documents that are relevant to the current task, and expand to related documents only when their references or the code under investigation indicate they are needed.
+
+Create and maintain repository documentation in the `docs/` folder unless a task explicitly requires a conventional file elsewhere (for example, `README.md`, `AGENTS.md`, or a colocated code comment).
+
+## Subagents
+
+The default subagent limit for a task is zero. Do not create or delegate work to subagents for convenience, speed, or parallelism.
+
+Only create subagents when the user's prompt explicitly asks for them or an applicable skill's instructions explicitly require them. When subagents are authorized, create no more than the number requested; if no number is specified, use the minimum number necessary to satisfy the instruction.
+
 ## Commands
 
 ```bash
