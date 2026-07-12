@@ -19,14 +19,20 @@ import {
   SchedulePostDto,
   InitiateMediaUploadDto,
   CompleteMediaUploadDto,
+  CreatePostDto,
 } from './dto';
 import {
   AccountProvider,
+  Artifact,
+  ArtifactType,
   ConnectedAccount,
   LinkedinAccountType,
+  Post,
   PostDraft,
   PostDraftStatus,
+  PostStatus,
   User,
+  VersionStatus,
 } from 'src/database/schemas';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
@@ -63,11 +69,174 @@ export class PostService {
     private readonly mediaUploadQueue: MediaUploadQueue,
     @InjectModel(PostDraft.name)
     private readonly postDraftModel: Model<PostDraft>,
+    @InjectModel(Post.name)
+    private readonly postModel: Model<Post>,
+    @InjectModel(Artifact.name)
+    private readonly artifactModel: Model<Artifact>,
     @InjectModel(ConnectedAccount.name)
     private readonly connectedAccountModel: Model<ConnectedAccount>,
     private readonly encryptionService: EncryptionService,
     private readonly featureGatingService: FeatureGatingService,
   ) {}
+
+  async createPost(user: User, dto: CreatePostDto): Promise<Post> {
+    const artifact = await this.artifactModel.findById(dto.artifactId);
+    if (!artifact) throw new NotFoundException('Artifact not found');
+    if (artifact.user.toString() !== user._id.toString()) {
+      throw new ForbiddenException(
+        'You are not authorized to publish this artifact',
+      );
+    }
+
+    const versionNumber = dto.version ?? artifact.currentVersion;
+    const version = artifact.versions.find(
+      (candidate) => candidate.version === versionNumber,
+    );
+    if (!version || version.status !== VersionStatus.READY) {
+      throw new BadRequestException(
+        'Artifact version must be READY to publish',
+      );
+    }
+
+    const connectedAccount = await this.getOwnedUsableLinkedinConnectedAccount(
+      user._id.toString(),
+      dto.connectedAccount,
+      dto.scheduledAt ? 'schedule posts' : 'publish posts',
+    );
+    if (connectedAccount.accountType === LinkedinAccountType.ORGANIZATION) {
+      await this.featureGatingService.assertCompanyPagesAccess(
+        user._id.toString(),
+      );
+    }
+
+    const scheduledAt = dto.scheduledAt ? new Date(dto.scheduledAt) : undefined;
+    if (scheduledAt && scheduledAt.getTime() <= Date.now()) {
+      throw new BadRequestException('Scheduled time must be in the future');
+    }
+    if (scheduledAt) {
+      await this.featureGatingService.assertScheduledPostQuota(
+        user._id.toString(),
+      );
+    }
+
+    const post = new this.postModel({
+      user: user._id,
+      connectedAccount: new Types.ObjectId(dto.connectedAccount),
+      artifacts: [
+        {
+          artifact: new Types.ObjectId(dto.artifactId),
+          version: versionNumber,
+        },
+      ],
+      status: PostStatus.SCHEDULED,
+      ...(scheduledAt ? { scheduledAt } : {}),
+    });
+    await post.save();
+
+    if (!scheduledAt) {
+      return this.publishPost(post._id.toString());
+    }
+
+    await this.scheduleQueue.addScheduleJob(
+      post._id.toString(),
+      user._id.toString(),
+      scheduledAt.getTime() - Date.now(),
+    );
+    await this.featureGatingService.incrementScheduledPostUsage(
+      user._id.toString(),
+    );
+    return post;
+  }
+
+  async publishPost(postId: string): Promise<Post> {
+    const post = await this.postModel.findById(postId);
+    if (!post) throw new NotFoundException('Post not found');
+    if (post.status === PostStatus.PUBLISHED) {
+      throw new BadRequestException('Post is already published');
+    }
+
+    const source = post.artifacts[0];
+    const artifact = source
+      ? await this.artifactModel.findById(source.artifact)
+      : null;
+    const version = artifact?.versions.find(
+      (candidate) => candidate.version === source?.version,
+    );
+    if (
+      !artifact ||
+      artifact.deletedAt ||
+      artifact.type !== ArtifactType.POST ||
+      !version ||
+      version.status !== VersionStatus.READY ||
+      typeof version.content?.commentary !== 'string'
+    ) {
+      await this.failPost(post, 'source artifact unavailable');
+      throw new BadRequestException('source artifact unavailable');
+    }
+
+    try {
+      const connectedAccount =
+        await this.getOwnedUsableLinkedinConnectedAccount(
+          post.user.toString(),
+          post.connectedAccount.toString(),
+          'publish posts',
+        );
+      const accessToken = await this.encryptionService.decrypt(
+        connectedAccount.accessToken!,
+      );
+      const data: ILinkedInPost = {
+        author: this.resolveLinkedinAuthorUrn(connectedAccount),
+        commentary: formatLinkedinContent(version.content.commentary),
+        visibility: 'PUBLIC',
+        distribution: {
+          feedDistribution: 'MAIN_FEED',
+          targetEntities: [],
+          thirdPartyDistributionChannels: [],
+        },
+        lifecycleState: 'PUBLISHED',
+        isReshareDisabledByAuthor: false,
+      };
+      const { response } = await apiFetch<unknown>(
+        `${this.LINKEDIN_API_BASE}/posts`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Restli-Protocol-Version': '2.0.0',
+            'LinkedIn-Version': '202601',
+            Authorization: `Bearer ${accessToken}`,
+          },
+          body: JSON.stringify(data),
+        },
+      );
+      const channelPostId = response.headers.get('x-restli-id');
+      if (channelPostId) post.channelPostId = channelPostId;
+      post.status = PostStatus.PUBLISHED;
+      post.publishedAt = new Date();
+      post.failureReason = undefined;
+      await post.save();
+      return post;
+    } catch (error) {
+      this.logger.error(error);
+      const reconnectRequired =
+        error instanceof ApiError &&
+        error.statusCode === 400 &&
+        typeof error.data?.message === 'string' &&
+        error.data.message.includes('Organization permissions must be used');
+      const failureReason = reconnectRequired
+        ? 'Your LinkedIn account needs to be reconnected to enable company page posting. Please disconnect and reconnect your LinkedIn account.'
+        : 'Failed to publish post';
+      await this.failPost(post, failureReason);
+      if (reconnectRequired) throw new BadRequestException(failureReason);
+      throw new InternalServerErrorException(failureReason);
+    }
+  }
+
+  private async failPost(post: Post, reason: string): Promise<void> {
+    post.status = PostStatus.FAILED;
+    post.failureReason = reason;
+    await post.save();
+  }
 
   async createDraft(user: User, accountId: string, dto: InputDto) {
     await this.getOwnedLinkedinConnectedAccount(user._id.toString(), accountId);

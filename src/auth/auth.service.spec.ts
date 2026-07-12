@@ -457,8 +457,9 @@ describe('AuthService.disconnectConnectedAccount', () => {
       expect.any(Object),
       expect.objectContaining({
         $set: expect.objectContaining({
-          status: 'DRAFT',
+          status: 'FAILED',
           scheduledAt: null,
+          failureReason: 'connected account disconnected',
         }),
       }),
     );

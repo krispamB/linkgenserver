@@ -21,6 +21,7 @@ import {
   SchedulePostDto,
   InitiateMediaUploadDto,
   CompleteMediaUploadDto,
+  CreatePostDto,
 } from './dto';
 import { SubscriptionAccessGuard } from '../common/guards';
 import { ClerkAuthGuard } from '../auth/clerk';
@@ -37,6 +38,20 @@ import type { GetPostsResult } from './post.service';
 @Controller('posts')
 export class PostController {
   constructor(private readonly postService: PostService) {}
+
+  @HttpCode(HttpStatus.CREATED)
+  @UseGuards(SubscriptionAccessGuard)
+  @Post()
+  async createPost(
+    @GetUser() user: User,
+    @Body() dto: CreatePostDto,
+  ): Promise<IAppResponse> {
+    return {
+      statusCode: HttpStatus.CREATED,
+      message: 'Post created successfully',
+      data: await this.postService.createPost(user, dto),
+    };
+  }
 
   @HttpCode(HttpStatus.CREATED)
   @UseGuards(SubscriptionAccessGuard)

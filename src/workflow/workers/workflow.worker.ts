@@ -91,7 +91,7 @@ async function bootstrapWorker() {
           return;
         }
 
-        await postService.publishOnLinkedIn(user, postId);
+        await postService.publishPost(postId);
         try {
           await emailQueue.addScheduledPostPublishedEmailJob(
             user.email,

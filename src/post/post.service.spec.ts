@@ -1,3 +1,4 @@
+import { BadRequestException, ForbiddenException } from '@nestjs/common';
 import { Types } from 'mongoose';
 
 jest.mock(
@@ -6,6 +7,19 @@ jest.mock(
     AccountProvider: { LINKEDIN: 'LINKEDIN' },
     LinkedinAccountType: { PERSON: 'PERSON', ORGANIZATION: 'ORGANIZATION' },
     ConnectedAccount: { name: 'ConnectedAccount' },
+    Artifact: { name: 'Artifact' },
+    ArtifactType: { POST: 'POST', POLL: 'POLL', DOCUMENT: 'DOCUMENT' },
+    VersionStatus: {
+      GENERATING: 'GENERATING',
+      READY: 'READY',
+      FAILED: 'FAILED',
+    },
+    Post: { name: 'Post' },
+    PostStatus: {
+      SCHEDULED: 'SCHEDULED',
+      PUBLISHED: 'PUBLISHED',
+      FAILED: 'FAILED',
+    },
     PostDraft: { name: 'PostDraft' },
     PostDraftStatus: {
       DRAFT: 'DRAFT',
@@ -18,7 +32,10 @@ jest.mock(
 );
 jest.mock(
   'src/common/HelperFn/apiFetch.helper',
-  () => ({ apiFetch: jest.fn() }),
+  () => ({
+    apiFetch: jest.fn(),
+    ApiError: class ApiError extends Error {},
+  }),
   { virtual: true },
 );
 jest.mock('src/common/HelperFn', () => ({ formatLinkedinContent: jest.fn() }), {
@@ -557,6 +574,182 @@ describe('PostService.schedulePost', () => {
       userId.toString(),
     );
     expect(mocks.incrementScheduledPostUsage).not.toHaveBeenCalled();
+  });
+});
+
+describe('PostService artifact publishing', () => {
+  const makeService = () => {
+    const service = Object.create(PostService.prototype) as PostService;
+    const userId = new Types.ObjectId();
+    const artifactId = new Types.ObjectId();
+    const accountId = new Types.ObjectId();
+    const postId = new Types.ObjectId();
+    const save = jest.fn().mockResolvedValue(undefined);
+    const post = {
+      _id: postId,
+      user: userId,
+      connectedAccount: accountId,
+      artifacts: [{ artifact: artifactId, version: 1 }],
+      status: 'SCHEDULED',
+      save,
+    } as any;
+    const artifact = {
+      _id: artifactId,
+      user: userId,
+      type: 'POST',
+      currentVersion: 1,
+      versions: [
+        {
+          version: 1,
+          status: 'READY',
+          content: { commentary: 'Approved text' },
+        },
+      ],
+    } as any;
+    const account = {
+      _id: accountId,
+      user: userId,
+      provider: 'LINKEDIN',
+      isActive: true,
+      accessToken: 'encrypted',
+      accountType: 'PERSON',
+      externalId: 'person-1',
+      profileMetadata: {},
+    };
+    const mocks = {
+      postModel: jest
+        .fn()
+        .mockImplementation((values) => Object.assign(post, values)),
+      findPostById: jest.fn().mockResolvedValue(post),
+      findArtifactById: jest.fn().mockResolvedValue(artifact),
+      findAccountById: jest.fn().mockResolvedValue(account),
+      addScheduleJob: jest.fn().mockResolvedValue(undefined),
+      assertScheduledPostQuota: jest.fn().mockResolvedValue(undefined),
+      incrementScheduledPostUsage: jest.fn().mockResolvedValue(undefined),
+      assertCompanyPagesAccess: jest.fn().mockResolvedValue(undefined),
+      decrypt: jest.fn().mockResolvedValue('token'),
+    };
+    Object.assign(service as any, {
+      postModel: Object.assign(mocks.postModel, {
+        findById: mocks.findPostById,
+      }),
+      artifactModel: { findById: mocks.findArtifactById },
+      connectedAccountModel: { findById: mocks.findAccountById },
+      scheduleQueue: { addScheduleJob: mocks.addScheduleJob },
+      featureGatingService: {
+        assertScheduledPostQuota: mocks.assertScheduledPostQuota,
+        incrementScheduledPostUsage: mocks.incrementScheduledPostUsage,
+        assertCompanyPagesAccess: mocks.assertCompanyPagesAccess,
+      },
+      encryptionService: { decrypt: mocks.decrypt },
+      LINKEDIN_API_BASE: 'https://api.linkedin.com/rest',
+      logger: { error: jest.fn() },
+    });
+    return {
+      service,
+      mocks,
+      fixtures: { userId, artifactId, accountId, postId, post, artifact },
+    };
+  };
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    (apiFetch as jest.Mock).mockResolvedValue({
+      response: {
+        headers: { get: jest.fn().mockReturnValue('urn:li:share:123') },
+      },
+    });
+    (formatLinkedinContent as jest.Mock).mockImplementation(
+      (value: string) => value,
+    );
+  });
+
+  describe('createPost', () => {
+    it('should pin and publish the READY artifact version when scheduledAt is absent', async () => {
+      const { service, mocks, fixtures } = makeService();
+      const publishedDocument = {
+        ...fixtures.post,
+        save: jest.fn().mockResolvedValue(undefined),
+      };
+      mocks.findPostById.mockResolvedValueOnce(publishedDocument);
+
+      const result = await service.createPost({ _id: fixtures.userId } as any, {
+        artifactId: fixtures.artifactId.toString(),
+        connectedAccount: fixtures.accountId.toString(),
+      });
+
+      expect(mocks.postModel).toHaveBeenCalledWith(
+        expect.objectContaining({
+          artifacts: [{ artifact: fixtures.artifactId, version: 1 }],
+          connectedAccount: fixtures.accountId,
+        }),
+      );
+      expect(result.status).toBe('PUBLISHED');
+      expect(result.channelPostId).toBe('urn:li:share:123');
+      expect(result).toBe(publishedDocument);
+    });
+
+    it('should reject a GENERATING artifact version', async () => {
+      const { service, fixtures } = makeService();
+      fixtures.artifact.versions[0].status = 'GENERATING';
+
+      await expect(
+        service.createPost({ _id: fixtures.userId } as any, {
+          artifactId: fixtures.artifactId.toString(),
+          connectedAccount: fixtures.accountId.toString(),
+        }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+    });
+
+    it('should reject an artifact owned by another user', async () => {
+      const { service, fixtures } = makeService();
+      fixtures.artifact.user = new Types.ObjectId();
+
+      await expect(
+        service.createPost({ _id: fixtures.userId } as any, {
+          artifactId: fixtures.artifactId.toString(),
+          connectedAccount: fixtures.accountId.toString(),
+        }),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+    });
+  });
+
+  describe('publishPost', () => {
+    it('should publish commentary from the pinned POST version without a content object', async () => {
+      const { service, fixtures } = makeService();
+
+      await service.publishPost(fixtures.postId.toString());
+
+      const request = (apiFetch as jest.Mock).mock.calls[0][1];
+      expect(JSON.parse(request.body)).toMatchObject({
+        commentary: 'Approved text',
+      });
+      expect(JSON.parse(request.body).content).toBeUndefined();
+      expect(fixtures.post.status).toBe('PUBLISHED');
+    });
+
+    it('should fail safely when the pinned version is unavailable', async () => {
+      const { service, fixtures } = makeService();
+      fixtures.artifact.versions = [];
+
+      await expect(
+        service.publishPost(fixtures.postId.toString()),
+      ).rejects.toThrow('source artifact unavailable');
+      expect(fixtures.post.status).toBe('FAILED');
+      expect(fixtures.post.failureReason).toBe('source artifact unavailable');
+      expect(apiFetch).not.toHaveBeenCalled();
+    });
+
+    it('should persist FAILED when account token decryption fails', async () => {
+      const { service, mocks, fixtures } = makeService();
+      mocks.decrypt.mockRejectedValue(new Error('decrypt failed'));
+
+      await expect(
+        service.publishPost(fixtures.postId.toString()),
+      ).rejects.toThrow('Failed to publish post');
+      expect(fixtures.post.status).toBe('FAILED');
+      expect(fixtures.post.failureReason).toBe('Failed to publish post');
+    });
   });
 });
 
