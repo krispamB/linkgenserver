@@ -343,7 +343,7 @@ successful runs**.
 - **Config:** add `CREDITS_PER_USD`, `CREDIT_MARKUP`, `FALLBACK_CREDITS_PER_1K_TOKENS`,
   `CREDIT_SURCHARGE_WEB_SEARCH`, `CREDIT_SURCHARGE_PDF_RENDER` to `.env.example`; remove all
   `MARK_*`.
-- **Tests** (CLAUDE.md): `credit-meter.service.spec.ts` (conversion per kind incl. fallback
+- **Tests** (AGENTS.md): `credit-meter.service.spec.ts` (conversion per kind incl. fallback
   and rounding; surcharge math) and updated `feature-gating.service.spec.ts` (headroom
   guard, `credits` debit, dashboard shape, `-1`/`0` edge cases), manual construction +
   `makeService()` + `jest.mock(..., { virtual: true })`, run with `bun jest`.

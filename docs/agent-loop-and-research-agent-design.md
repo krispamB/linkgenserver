@@ -279,7 +279,7 @@ BullMQ `attempts:3`; terminal → `UnrecoverableError`):
 - **Per-role model config** via `ConfigService`: `RESEARCH_MODEL` (fast, for tool-loop
   turns) and `GENERATION_MODEL` (stronger, for final content) — no hardcoded model
   strings (retires the scattered `gemini-3-flash` / `gpt-5.4` / `gpt-5-mini` literals,
-  per CLAUDE.md's config rule).
+  per AGENTS.md's config rule).
 
 **Rejected — reinstate a multi-provider abstraction now** (port Mark's gateway/anthropic
 paths). Two+ live SDKs, more config and test surface, for a launch where OpenRouter
