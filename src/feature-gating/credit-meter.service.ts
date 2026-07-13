@@ -19,6 +19,7 @@ export class CreditMeterService {
   private readonly creditsPerUsd: number;
   private readonly markup: number;
   private readonly fallbackCreditsPer1kTokens: number;
+  private readonly minimumPdfRenderCredits: number;
   private readonly surcharges: Record<'web_search' | 'pdf_render', number>;
 
   constructor(
@@ -47,12 +48,24 @@ export class CreditMeterService {
         CREDIT_CONFIG_DEFAULTS.CREDIT_SURCHARGE_PDF_RENDER,
       ),
     };
+    this.minimumPdfRenderCredits = this.readNumber(
+      'CREDIT_MINIMUM_PDF_RENDER',
+      CREDIT_CONFIG_DEFAULTS.CREDIT_MINIMUM_PDF_RENDER,
+    );
   }
 
   // Pure and synchronous so `record` on the engine's meter stays non-async.
   toCredits(usage: UsageRecord): number {
     if (usage.kind === USAGE_KINDS.LLM) {
       return this.llmCredits(usage.amount, usage.detail);
+    }
+
+    if (usage.kind === USAGE_KINDS.PDF_RENDER) {
+      if (!Number.isFinite(usage.amount) || usage.amount <= 0) return 0;
+      return Math.max(
+        this.toWholeCredits(usage.amount * this.surcharges.pdf_render),
+        this.toWholeCredits(this.minimumPdfRenderCredits),
+      );
     }
 
     const surcharge = this.surcharges[usage.kind];

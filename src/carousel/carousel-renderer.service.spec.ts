@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import type { CarouselRenderInput } from '../workflow/engine/workflow.types';
 import { CarouselAssemblyError } from './carousel-renderer.error';
 import {
+  browserlessUnitsForDuration,
   CarouselRendererService,
   documentPdfKey,
 } from './carousel-renderer.service';
@@ -112,6 +113,8 @@ describe('CarouselRendererService', () => {
       expect(result).toEqual({
         pdfKey: 'artifacts/artifact-1/2/document.pdf',
         pageCount: slides.length,
+        browserlessDurationMs: expect.any(Number),
+        browserlessUnits: 1,
       });
       // R1: the returned render carries the key, never the private-bucket url.
       expect(result.pdfKey).not.toMatch(/^https?:\/\//);
@@ -166,6 +169,38 @@ describe('CarouselRendererService', () => {
       expect((error as Error).message).toContain(
         'Browserless PDF generation failed',
       );
+    });
+
+    it('should record Browserless duration and rounded 30-second units', async () => {
+      jest.useFakeTimers().setSystemTime(
+        new Date('2026-07-13T00:00:00.000Z'),
+      );
+      const { service, spies, pdf } = makeService();
+      spies.htmlToPdf.mockImplementation(async () => {
+        jest.setSystemTime(new Date('2026-07-13T00:01:00.001Z'));
+        return pdf;
+      });
+
+      const result = await service.render(makeInput(loadFixture('minimal')));
+
+      expect(result).toMatchObject({
+        browserlessDurationMs: 60_001,
+        browserlessUnits: 3,
+      });
+      jest.useRealTimers();
+    });
+  });
+
+  describe('browserlessUnitsForDuration', () => {
+    it.each([
+      [0, 1],
+      [1, 1],
+      [30_000, 1],
+      [30_001, 2],
+      [60_000, 2],
+      [60_001, 3],
+    ])('should resolve %i ms to %i units', (durationMs, units) => {
+      expect(browserlessUnitsForDuration(durationMs)).toBe(units);
     });
   });
 

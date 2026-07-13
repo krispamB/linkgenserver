@@ -8,6 +8,7 @@ import type { ArtifactContent } from '../../artifact/schemas';
 import type {
   ArtifactWriter,
   RefineContext,
+  RenderUsage,
   VersionRender,
 } from '../../artifact/artifact-writer.interface';
 import type {
@@ -101,6 +102,7 @@ export interface RunRecordHandle {
   readonly runId: string;
   setCurrentStep(step: WorkflowStep): Promise<void>;
   saveResearchContext(research: ResearchResult): Promise<void>;
+  saveRenderUsage(usage: RenderUsage): Promise<void>;
   getLatestCompletedResearch(
     artifactId: string,
   ): Promise<ResearchResult | undefined>;

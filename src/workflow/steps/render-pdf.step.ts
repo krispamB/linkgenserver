@@ -51,7 +51,18 @@ export const renderPdfStep: StepHandler = async (state, ctx) => {
       templateId: document.templateId,
       slides: document.slides,
     });
-    ctx.meter.record({ kind: USAGE_KINDS.PDF_RENDER, amount: 1 });
+    await ctx.run.saveRenderUsage({
+      durationMs: render.browserlessDurationMs,
+      units: render.browserlessUnits,
+    });
+    ctx.meter.record({
+      kind: USAGE_KINDS.PDF_RENDER,
+      amount: render.browserlessUnits,
+      detail: {
+        browserlessDurationMs: render.browserlessDurationMs,
+        browserlessUnits: render.browserlessUnits,
+      },
+    });
     return { render };
   } catch (error: unknown) {
     if (error instanceof CarouselAssemblyError) {

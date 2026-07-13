@@ -6,6 +6,13 @@ import { ArtifactContent } from './schemas';
 export interface VersionRender {
   pdfKey: string;
   pageCount: number;
+  browserlessDurationMs: number;
+  browserlessUnits: number;
+}
+
+export interface RenderUsage {
+  durationMs: number;
+  units: number;
 }
 
 export interface CurrentVersionRead {

@@ -71,6 +71,7 @@ const makeProcessor = () => {
     runId: 'run-1',
     setCurrentStep: jest.fn().mockResolvedValue(undefined),
     saveResearchContext: jest.fn().mockResolvedValue(undefined),
+    saveRenderUsage: jest.fn().mockResolvedValue(undefined),
     getLatestCompletedResearch: jest.fn(),
     complete: jest.fn().mockResolvedValue(undefined),
     fail: jest.fn().mockResolvedValue(undefined),
@@ -305,6 +306,8 @@ describe('ArtifactRunProcessor', () => {
       stubRenderer.render.mockResolvedValue({
         pdfKey: 'artifacts/artifact-1/2/document.pdf',
         pageCount: 2,
+        browserlessDurationMs: 30_001,
+        browserlessUnits: 2,
       });
       const job = makeJob({
         data: buildInput({
@@ -338,8 +341,17 @@ describe('ArtifactRunProcessor', () => {
             ],
           },
         },
-        { pdfKey: 'artifacts/artifact-1/2/document.pdf', pageCount: 2 },
+        {
+          pdfKey: 'artifacts/artifact-1/2/document.pdf',
+          pageCount: 2,
+          browserlessDurationMs: 30_001,
+          browserlessUnits: 2,
+        },
       );
+      expect(mocks.runHandle.saveRenderUsage).toHaveBeenCalledWith({
+        durationMs: 30_001,
+        units: 2,
+      });
     });
 
     it('should meter the LLM turn and commit the credits once', async () => {

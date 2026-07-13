@@ -140,8 +140,9 @@ charged to users, use this launch policy:
 
 - Charge **8 credits per successful document render**. This covers two units at
   the conservative $0.002/unit rate with the 2× markup.
-- Once render duration is observable, charge **4 credits per measured
-  Browserless unit**, with an 8-credit minimum.
+- Render duration is now observable. Charge **4 credits per measured
+  Browserless unit**, with an 8-credit minimum, using
+  `units = max(1, ceil(duration_ms / 30,000))`.
 - Do not charge by slide count; Browserless bills browser time, not PDF pages.
 - Do not include residential proxy or CAPTCHA surcharges in the document price
   unless the rendering path starts using those features. The current local HTML

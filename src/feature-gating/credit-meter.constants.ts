@@ -22,6 +22,8 @@ export interface UsageDetail {
   // provider reports no cost.
   totalTokens?: number;
   model?: string;
+  browserlessDurationMs?: number;
+  browserlessUnits?: number;
 }
 
 export const CREDIT_CONFIG_DEFAULTS = {
@@ -31,5 +33,6 @@ export const CREDIT_CONFIG_DEFAULTS = {
   // provider that reports no cost cannot be cheaper than one that does.
   FALLBACK_CREDITS_PER_1K_TOKENS: 10,
   CREDIT_SURCHARGE_WEB_SEARCH: 32,
-  CREDIT_SURCHARGE_PDF_RENDER: 5,
+  CREDIT_SURCHARGE_PDF_RENDER: 4,
+  CREDIT_MINIMUM_PDF_RENDER: 8,
 } as const;

@@ -25,15 +25,19 @@ const makeCtx = () => {
   const render = jest.fn().mockResolvedValue({
     pdfKey: 'artifacts/artifact-1/2/document.pdf',
     pageCount: 2,
+    browserlessDurationMs: 44_000,
+    browserlessUnits: 2,
   });
   const record = jest.fn();
+  const saveRenderUsage = jest.fn().mockResolvedValue(undefined);
   const emit = jest.fn();
   const ctx = {
     renderer: { render },
     meter: { record },
+    run: { saveRenderUsage },
     emit,
   } as unknown as StepContext;
-  return { ctx, render, record, emit };
+  return { ctx, render, record, saveRenderUsage, emit };
 };
 
 describe('renderPdfStep', () => {
@@ -49,19 +53,29 @@ describe('renderPdfStep', () => {
       slides: documentContent().document.slides,
     });
     expect(patch).toEqual({
-      render: { pdfKey: 'artifacts/artifact-1/2/document.pdf', pageCount: 2 },
+      render: {
+        pdfKey: 'artifacts/artifact-1/2/document.pdf',
+        pageCount: 2,
+        browserlessDurationMs: 44_000,
+        browserlessUnits: 2,
+      },
     });
   });
 
-  it('should bill exactly one pdf_render surcharge on success', async () => {
-    const { ctx, record } = makeCtx();
+  it('should meter measured Browserless units and persist auditable render usage on success', async () => {
+    const { ctx, record, saveRenderUsage } = makeCtx();
 
     await renderPdfStep(makeState(), ctx);
 
     expect(record).toHaveBeenCalledTimes(1);
     expect(record).toHaveBeenCalledWith({
       kind: USAGE_KINDS.PDF_RENDER,
-      amount: 1,
+      amount: 2,
+      detail: { browserlessDurationMs: 44_000, browserlessUnits: 2 },
+    });
+    expect(saveRenderUsage).toHaveBeenCalledWith({
+      durationMs: 44_000,
+      units: 2,
     });
   });
 

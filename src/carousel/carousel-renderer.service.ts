@@ -12,6 +12,10 @@ import { Slide } from './schemas';
 import { htmlToPdf } from './utils/html-to-pdf.util';
 
 const PDF_MIME_TYPE = 'application/pdf';
+const BROWSERLESS_UNIT_MS = 30_000;
+
+export const browserlessUnitsForDuration = (durationMs: number): number =>
+  Math.max(1, Math.ceil(durationMs / BROWSERLESS_UNIT_MS));
 
 /**
  * The R2 object key for a document version's rendered PDF. A whole-job retry
@@ -38,12 +42,25 @@ export class CarouselRendererService implements CarouselRenderer {
 
   async render(input: CarouselRenderInput): Promise<VersionRender> {
     const html = this.assembleHtml(input.templateId, input.slides);
+    const browserlessStartedAt = Date.now();
     const pdf = await this.htmlToPdf(html);
+    const browserlessDurationMs = Math.max(
+      0,
+      Date.now() - browserlessStartedAt,
+    );
+    const browserlessUnits = browserlessUnitsForDuration(
+      browserlessDurationMs,
+    );
     const pdfKey = documentPdfKey(input.artifactId, input.version);
     await this.uploadFile(pdfKey, pdf, PDF_MIME_TYPE);
     // The page box matches the slide box exactly, so `pageCount = slides.length`
     // is true by construction — no need to count pages in the returned PDF.
-    return { pdfKey, pageCount: input.slides.length };
+    return {
+      pdfKey,
+      pageCount: input.slides.length,
+      browserlessDurationMs,
+      browserlessUnits,
+    };
   }
 
   /**

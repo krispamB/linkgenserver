@@ -3,6 +3,7 @@ import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types, isValidObjectId } from 'mongoose';
 import { RunKind, RunStatus, WorkflowRun } from '../database/schemas';
 import type { ResearchResult } from '../agent/agent-runner.interface';
+import type { RenderUsage } from '../artifact/artifact-writer.interface';
 import type { BuildInput, RunRecordHandle } from './engine/workflow.types';
 import { WorkflowStep } from './workflow.constants';
 
@@ -70,6 +71,8 @@ export class WorkflowRunService {
         this.patch(runId, { currentStep: step }),
       saveResearchContext: (research: ResearchResult) =>
         this.patch(runId, { researchContext: research }),
+      saveRenderUsage: (usage: RenderUsage) =>
+        this.patch(runId, { renderUsage: usage }),
       getLatestCompletedResearch: (artifactId: string) =>
         this.getLatestCompletedResearch(artifactId),
       complete: (creditsUsed: number) =>

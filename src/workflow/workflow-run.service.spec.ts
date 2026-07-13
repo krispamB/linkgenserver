@@ -162,6 +162,18 @@ describe('WorkflowRunService', () => {
       );
     });
 
+    it('should persist auditable Browserless render usage on the run', async () => {
+      await service.handleFor(fixtures.runId).saveRenderUsage({
+        durationMs: 60_001,
+        units: 3,
+      });
+
+      expect(mocks.workflowRunModel.updateOne).toHaveBeenCalledWith(
+        { _id: expect.any(Types.ObjectId) },
+        { $set: { renderUsage: { durationMs: 60_001, units: 3 } } },
+      );
+    });
+
     it('should mark the run COMPLETED with the winning attempt total', async () => {
       await service.handleFor(fixtures.runId).complete(38);
 

@@ -24,7 +24,8 @@ describe('CreditMeterService', () => {
     CREDIT_MARKUP: 1.0,
     FALLBACK_CREDITS_PER_1K_TOKENS: 10,
     CREDIT_SURCHARGE_WEB_SEARCH: 32,
-    CREDIT_SURCHARGE_PDF_RENDER: 5,
+    CREDIT_SURCHARGE_PDF_RENDER: 4,
+    CREDIT_MINIMUM_PDF_RENDER: 8,
   };
 
   const makeService = (overrides: Record<string, unknown> = {}) => {
@@ -149,12 +150,16 @@ describe('CreditMeterService', () => {
       expect(service.toCredits({ kind: 'web_search', amount: 3 })).toBe(96);
     });
 
-    it('should charge the flat surcharge per pdf render', () => {
-      expect(service.toCredits({ kind: 'pdf_render', amount: 1 })).toBe(5);
+    it('should charge the eight-credit minimum for one Browserless unit', () => {
+      expect(service.toCredits({ kind: 'pdf_render', amount: 1 })).toBe(8);
     });
 
-    it('should multiply the pdf render surcharge by the render count', () => {
-      expect(service.toCredits({ kind: 'pdf_render', amount: 2 })).toBe(10);
+    it('should charge the eight-credit minimum for two Browserless units', () => {
+      expect(service.toCredits({ kind: 'pdf_render', amount: 2 })).toBe(8);
+    });
+
+    it('should charge four credits per Browserless unit above the minimum envelope', () => {
+      expect(service.toCredits({ kind: 'pdf_render', amount: 3 })).toBe(12);
     });
 
     it('should ignore markup for surcharge kinds', () => {
