@@ -103,8 +103,11 @@ export class AgentRunnerService implements AgentRunner {
     this.researchModel =
       this.configService.getOrThrow<string>('RESEARCH_MODEL');
     this.researchMaxSteps = this.readMaxSteps();
-    this.researchMaxSuccessfulSearches = this.readPositiveInteger(
-      'RESEARCH_MAX_SUCCESSFUL_SEARCHES',
+    this.researchMaxSuccessfulSearches = Math.min(
+      this.readPositiveInteger(
+        'RESEARCH_MAX_SUCCESSFUL_SEARCHES',
+        DEFAULT_RESEARCH_MAX_SUCCESSFUL_SEARCHES,
+      ),
       DEFAULT_RESEARCH_MAX_SUCCESSFUL_SEARCHES,
     );
     this.searchWebTool = createSearchWebTool(

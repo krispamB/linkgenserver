@@ -78,13 +78,17 @@ const toolTurn = (
   usage: usage(cost),
 });
 
-const makeService = (maxSteps?: number) => {
+const makeService = (maxSteps?: number, maxSuccessfulSearches?: number) => {
   const llmService = { complete: jest.fn(), completeWithTools: jest.fn() };
   const configService = {
     getOrThrow: jest.fn((key: string) => CONFIG[key]),
-    get: jest.fn((key: string) =>
-      key === 'RESEARCH_MAX_STEPS' ? maxSteps : undefined,
-    ),
+    get: jest.fn((key: string) => {
+      if (key === 'RESEARCH_MAX_STEPS') return maxSteps;
+      if (key === 'RESEARCH_MAX_SUCCESSFUL_SEARCHES') {
+        return maxSuccessfulSearches;
+      }
+      return undefined;
+    }),
   };
 
   // The real parser: this suite's whole subject is what happens when the model's
@@ -707,6 +711,23 @@ describe('AgentRunnerService', () => {
 
       expect(tavilySearch).toHaveBeenCalledTimes(5);
       expect(onToolCall).toHaveBeenCalledTimes(5);
+    });
+
+    it('should clamp configured successful Tavily lookups to the five-search safety ceiling', async () => {
+      ({ service, mocks, fixtures } = makeService(undefined, 6));
+      tavilySearch.mockResolvedValue(tavilyResults([]));
+      const calls = Array.from({ length: 6 }, (_, index) => ({
+        id: `c${index + 1}`,
+        name: 'searchWeb',
+        input: { query: `q${index + 1}` },
+      }));
+      mocks.llmService.completeWithTools
+        .mockResolvedValueOnce(toolTurn(calls))
+        .mockResolvedValueOnce(toolTurn([], 0.01, 'findings'));
+
+      await service.research({ prompt: 'topic', type: ArtifactType.POST });
+
+      expect(tavilySearch).toHaveBeenCalledTimes(5);
     });
 
     it('should not consume the five-lookup cap when Tavily fails', async () => {
