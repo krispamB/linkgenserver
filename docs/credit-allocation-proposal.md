@@ -161,7 +161,7 @@ liability and conflicts with the profitability goal.
 
 | Tier | Monthly price | Recommended monthly credits | Research | Rationale |
 |---|---:|---:|---|---|
-| Free | $0 | **120** | No | One post, one poll, and one document without research |
+| Free | $0 | **120** | No | Shared across any mix of posts, polls, and documents without research |
 | Starter | $9.99 | **2,000** | Yes | Retains the current allowance; roughly 80 quick no-research runs |
 | Creator | $19.99 | **10,000** | Yes | Retains the current allowance; meaningful research capacity |
 | Pro Writer | $29.99 | **30,000** | Yes | Replaces uncapped usage with a high but bounded allowance |

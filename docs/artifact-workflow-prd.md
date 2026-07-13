@@ -926,7 +926,7 @@ new folder plus one registry entry; no schema or engine change.
 credits  = ceil(amount_usd * CREDITS_PER_USD * CREDIT_MARKUP)
 ```
 
-`CREDITS_PER_USD` and `CREDIT_MARKUP` (default `1.0`) are **global** env, never per-tier.
+`CREDITS_PER_USD` and `CREDIT_MARKUP` (launch default `2.0`) are **global** env, never per-tier.
 Per-tier config carries only the allowance.
 
 Because `amount_usd` is OpenRouter's authoritative per-call `usage.cost` — which already
@@ -950,11 +950,11 @@ Tokens are carried on `detail.totalTokens` for display and audit, never for pric
 Web search and PDF render cost real money but emit no `usage.cost`. Each carries a flat
 credit surcharge, priced in the same unit so it is commensurable with LLM credits:
 
-| `UsageKind` | Fired by | Env constant | Illustrative |
+| `UsageKind` | Fired by | Env constant | Launch policy |
 |---|---|---|---|
 | `llm` | every LLM turn | — (cost-derived) | — |
-| `web_search` | research agent, per Tavily call | `CREDIT_SURCHARGE_WEB_SEARCH` | `8` |
-| `pdf_render` | `RENDER_PDF`, per render (R5) | `CREDIT_SURCHARGE_PDF_RENDER` | `5` |
+| `web_search` | research agent, per successful Tavily lookup | `CREDIT_SURCHARGE_WEB_SEARCH` | `32` |
+| `pdf_render` | `RENDER_PDF`, per successful measured Browserless unit | `CREDIT_SURCHARGE_PDF_RENDER`, `CREDIT_MINIMUM_PDF_RENDER` | `max(8, 4 × units)` |
 
 `record`'s `amount` is **polymorphic by `kind`** — USD for `llm`, a unit count for
 surcharges (`credits = amount * CREDIT_SURCHARGE_<KIND>`). This asymmetry is inherited from
@@ -1061,14 +1061,14 @@ that gated it, so the counter has no remaining caller. `getDashboardUsage` retur
 
 ### Paddle / tier config
 
-Each plan's Paddle price maps to a tier carrying `limits.credits`, seeded from *target model
-cost per average run × expected runs per month × `CREDIT_MARKUP`*. Illustrative ladder: free
-`0` (no AI) or a small trial grant, Starter `2000`, Pro `10000`, top tier `-1`.
+Each plan's Paddle price maps to a tier carrying `limits.credits`. The launch ladder is Free
+`120`, Starter `2,000`, Creator `10,000`, and Pro Writer `30,000`; no paid tier has unlimited
+provider-backed credits. Free's allowance is one shared pool across posts, polls, and
+documents and does not enable research.
 
-**Sizing anchor** (illustrative, at `CREDITS_PER_USD = 1000`, markup `1.0`): an insight post
-≈ research (~$0.02) + generation (~$0.01) + one web search (`8`) ≈ **~38 credits**; a quick
-post (no research) ≈ **~12 credits**; a carousel adds a `pdf_render` (`5`). So "2,000
-credits" ≈ 50 insight posts or ~160 quick posts.
+**Sizing anchor** (at `CREDITS_PER_USD = 1000`, markup `2.0`): LLM usage is
+`ceil(provider cost in USD × 1000 × 2)`, each successful advanced Tavily lookup costs 32
+credits, and a successful Browserless render costs `max(8, 4 × measured units)`.
 
 **Upgrades take effect immediately** — the allowance is read live from the resolved tier at
 guard time while the `Usage` aggregate persists, so a mid-period upgrade instantly raises
@@ -1420,10 +1420,11 @@ New global env, added to `.env.example` (no hardcoded values — repo rule):
 | Key | Purpose | Default |
 |---|---|---|
 | `CREDITS_PER_USD` | credit peg | `1000` |
-| `CREDIT_MARKUP` | margin multiplier | `1.0` |
+| `CREDIT_MARKUP` | margin multiplier | `2.0` |
 | `FALLBACK_CREDITS_PER_1K_TOKENS` | safety net when `usage.cost` is missing | — |
-| `CREDIT_SURCHARGE_WEB_SEARCH` | flat surcharge per Tavily call | `8` |
-| `CREDIT_SURCHARGE_PDF_RENDER` | flat surcharge per Browserless render | `5` |
+| `CREDIT_SURCHARGE_WEB_SEARCH` | surcharge per successful Tavily lookup | `32` |
+| `CREDIT_SURCHARGE_PDF_RENDER` | surcharge per Browserless 30-second unit | `4` |
+| `CREDIT_MINIMUM_PDF_RENDER` | minimum successful Browserless render charge | `8` |
 | `RESEARCH_MODEL` | fast model for tool-loop turns | — |
 | `GENERATION_MODEL` | stronger model for final content | — |
 | `RESEARCH_MAX_STEPS` | agent iteration cap | `5` |
@@ -1639,8 +1640,8 @@ usage.tick → run.completed`; the version is `READY`; credits are debited once.
 > *Blocked by: T12, T13, T16.*
 
 > **T18 — tier seed, `.env.example`, and the dashboard.**
-> Seed `limits.credits` per tier (free `0` or a trial grant, Starter `2000`, Pro `10000`, top
-> `-1`), sized against the §9 anchor. Add all eight §13 keys to `.env.example`. Verify
+> Seed `limits.credits` per tier (Free `120`, Starter `2,000`, Creator `10,000`, Pro Writer
+> `30,000`), sized against the §9 anchor. Add the §13 keys to `.env.example`. Verify
 > `getDashboardUsage` returns `{credits, connected_accounts, scheduled_posts}` and that
 > `limit === 0` is distinguishable from "out of credits". *Blocked by: T3, T17.*
 
