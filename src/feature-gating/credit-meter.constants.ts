@@ -1,3 +1,5 @@
+import type { BrowserlessUsage } from '../carousel/render-usage.types';
+
 export const USAGE_KINDS = {
   LLM: 'llm',
   WEB_SEARCH: 'web_search',
@@ -22,7 +24,7 @@ export interface UsageDetail {
   // provider reports no cost.
   totalTokens?: number;
   model?: string;
-  browserless?: { durationMs: number; units: number };
+  browserless?: BrowserlessUsage;
 }
 
 export const CREDIT_CONFIG_DEFAULTS = {
