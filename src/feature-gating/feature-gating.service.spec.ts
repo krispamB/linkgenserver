@@ -328,34 +328,86 @@ describe('FeatureGatingService', () => {
     jest.useRealTimers();
   });
 
-  it('increments scheduled_posts usage with upsert', async () => {
-    const { service, mocks } = makeService();
-    const userId = new Types.ObjectId().toString();
-    const periodStart = new Date('2026-03-01T00:00:00.000Z');
+  describe('incrementScheduledPostUsage', () => {
+    it('should increment scheduled_posts once when the post has not been counted', async () => {
+      const { service, mocks } = makeService();
+      const userId = new Types.ObjectId().toString();
+      const postId = new Types.ObjectId().toString();
+      const periodStart = new Date('2026-03-01T00:00:00.000Z');
 
-    jest
-      .spyOn<any, any>(service as any, 'resolveUsagePeriodStart')
-      .mockResolvedValue(periodStart);
-    mocks.usageModel.updateOne.mockResolvedValue({ acknowledged: true });
+      jest
+        .spyOn<any, any>(service as any, 'resolveUsagePeriodStart')
+        .mockResolvedValue(periodStart);
+      mocks.usageModel.updateOne.mockResolvedValue({ acknowledged: true });
 
-    await service.incrementScheduledPostUsage(userId);
+      await service.incrementScheduledPostUsage(userId, postId);
 
-    expect(mocks.usageModel.updateOne).toHaveBeenCalledWith(
-      {
-        user_id: new Types.ObjectId(userId),
-        feature: 'scheduled_posts',
-        periodStart,
-      },
-      {
-        $inc: { count: 1 },
-        $setOnInsert: {
+      expect(mocks.usageModel.updateOne).toHaveBeenCalledWith(
+        {
           user_id: new Types.ObjectId(userId),
           feature: 'scheduled_posts',
           periodStart,
+          scheduledPostIds: { $ne: new Types.ObjectId(postId) },
         },
-      },
-      { upsert: true },
-    );
+        {
+          $inc: { count: 1 },
+          $addToSet: { scheduledPostIds: new Types.ObjectId(postId) },
+          $setOnInsert: {
+            user_id: new Types.ObjectId(userId),
+            feature: 'scheduled_posts',
+            periodStart,
+          },
+        },
+        { upsert: true },
+      );
+    });
+
+    it('should keep the conditional post claim when a concurrent upsert races', async () => {
+      const { service, mocks } = makeService();
+      const userId = new Types.ObjectId().toString();
+      const postId = new Types.ObjectId().toString();
+      jest
+        .spyOn<any, any>(service as any, 'resolveUsagePeriodStart')
+        .mockResolvedValue(new Date('2026-03-01T00:00:00.000Z'));
+      mocks.usageModel.updateOne
+        .mockRejectedValueOnce({ code: 11000 })
+        .mockResolvedValueOnce({ modifiedCount: 0 });
+
+      await service.incrementScheduledPostUsage(userId, postId);
+
+      expect(mocks.usageModel.updateOne).toHaveBeenCalledTimes(2);
+      expect(mocks.usageModel.updateOne.mock.calls[1][0]).toEqual(
+        expect.objectContaining({
+          scheduledPostIds: { $ne: new Types.ObjectId(postId) },
+        }),
+      );
+      expect(mocks.usageModel.updateOne.mock.calls[1][1]).toEqual(
+        expect.objectContaining({
+          $inc: { count: 1 },
+          $addToSet: { scheduledPostIds: new Types.ObjectId(postId) },
+        }),
+      );
+    });
+  });
+
+  describe('hasScheduledPostUsage', () => {
+    it('should find prior scheduling usage when the post was counted in any period', async () => {
+      const { service, mocks } = makeService();
+      const userId = new Types.ObjectId().toString();
+      const postId = new Types.ObjectId().toString();
+      mocks.usageModel.findOne.mockReturnValue({
+        lean: jest.fn().mockResolvedValue({ _id: new Types.ObjectId() }),
+      });
+
+      await expect(service.hasScheduledPostUsage(userId, postId)).resolves.toBe(
+        true,
+      );
+      expect(mocks.usageModel.findOne).toHaveBeenCalledWith({
+        user_id: new Types.ObjectId(userId),
+        feature: 'scheduled_posts',
+        scheduledPostIds: new Types.ObjectId(postId),
+      });
+    });
   });
 
   it('skips connected account limit check for reconnect flow', async () => {

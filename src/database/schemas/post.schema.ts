@@ -39,6 +39,9 @@ export class Post extends Document {
   @Prop()
   scheduledAt?: Date;
 
+  @Prop({ default: false })
+  scheduledPostUsageCounted: boolean;
+
   @Prop()
   publishedAt?: Date;
 

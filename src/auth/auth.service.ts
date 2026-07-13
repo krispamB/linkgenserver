@@ -628,7 +628,6 @@ export class AuthService {
         {
           $set: {
             status: PostStatus.FAILED,
-            scheduledAt: null,
             failureReason: 'connected account disconnected',
           },
         },

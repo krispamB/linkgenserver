@@ -36,7 +36,7 @@ import {
   VersionStatus,
 } from 'src/database/schemas';
 import { InjectModel } from '@nestjs/mongoose';
-import { Model, Types } from 'mongoose';
+import { Model, QueryFilter, Types } from 'mongoose';
 import { ApiError, apiFetch } from 'src/common/HelperFn/apiFetch.helper';
 import { EncryptionService } from 'src/encryption/encryption.service';
 import { IContent, ILinkedInPost } from './post.interface';
@@ -59,8 +59,10 @@ interface PostFilters {
   connectedAccountIds: string[];
 }
 
+const POST_PAGE_SIZE = 20;
+
 export interface GetPostsResult {
-  data: PostDraft[];
+  data: Post[];
   filters: PostFilters;
 }
 
@@ -71,6 +73,13 @@ export class PostService {
   private readonly logger = new Logger(PostService.name);
   private readonly LINKEDIN_API_BASE = 'https://api.linkedin.com/rest';
   private readonly MEDIA_UPLOAD_SLOT_TTL_MS = 30 * 60 * 1000;
+
+  private referenceId(
+    reference: User | ConnectedAccount | Types.ObjectId,
+  ): string {
+    if (reference instanceof Types.ObjectId) return reference.toHexString();
+    return reference._id.toHexString();
+  }
 
   constructor(
     private readonly workflowQueue: WorkflowQueue,
@@ -92,7 +101,7 @@ export class PostService {
   async createPost(user: User, dto: CreatePostDto): Promise<Post> {
     const artifact = await this.artifactModel.findById(dto.artifactId);
     if (!artifact) throw new NotFoundException('Artifact not found');
-    if (artifact.user.toString() !== user._id.toString()) {
+    if (this.referenceId(artifact.user) !== user._id.toString()) {
       throw new ForbiddenException(
         'You are not authorized to publish this artifact',
       );
@@ -154,7 +163,10 @@ export class PostService {
     );
     await this.featureGatingService.incrementScheduledPostUsage(
       user._id.toString(),
+      post._id.toString(),
     );
+    post.scheduledPostUsageCounted = true;
+    await post.save();
     return post;
   }
 
@@ -186,8 +198,8 @@ export class PostService {
     try {
       const connectedAccount =
         await this.getOwnedUsableLinkedinConnectedAccount(
-          post.user.toString(),
-          post.connectedAccount.toString(),
+          this.referenceId(post.user),
+          this.referenceId(post.connectedAccount),
           'publish posts',
         );
       const accessToken = await this.encryptionService.decrypt(
@@ -289,6 +301,27 @@ export class PostService {
     await post.save();
   }
 
+  async publishPostNow(user: User, postId: string): Promise<Post> {
+    const post = await this.postModel.findById(postId);
+    if (!post) throw new NotFoundException('Post not found');
+    if (this.referenceId(post.user) !== user._id.toString()) {
+      throw new ForbiddenException(
+        'You are not authorized to publish this post',
+      );
+    }
+    if (
+      post.status !== PostStatus.SCHEDULED &&
+      post.status !== PostStatus.FAILED
+    ) {
+      throw new BadRequestException('Post cannot be published');
+    }
+
+    const scheduledJob = await this.scheduleQueue.queue.getJob(postId);
+    if (scheduledJob) await scheduledJob.remove();
+
+    return this.publishPost(postId);
+  }
+
   async createDraft(user: User, accountId: string, dto: InputDto) {
     await this.getOwnedLinkedinConnectedAccount(user._id.toString(), accountId);
 
@@ -320,14 +353,15 @@ export class PostService {
 
   async getPosts(
     user: User,
-    accountConnected?: string,
+    connectedAccount?: string,
     status?: string,
     month?: string,
+    page = 1,
   ): Promise<GetPostsResult> {
-    const filter: any = { user: user._id };
+    const filter: QueryFilter<Post> = { user: user._id };
 
-    if (accountConnected) {
-      filter.connectedAccount = new Types.ObjectId(accountConnected);
+    if (connectedAccount) {
+      filter.connectedAccount = new Types.ObjectId(connectedAccount);
     }
 
     if (status) {
@@ -343,14 +377,16 @@ export class PostService {
       }
     }
 
-    const postsQuery = this.postDraftModel
+    const normalizedPage = Number.isInteger(page) && page > 0 ? page : 1;
+    const postsQuery = this.postModel
       .find(filter)
-      .select('-userIntent -compressionResult')
       .sort({ createdAt: -1 })
+      .skip((normalizedPage - 1) * POST_PAGE_SIZE)
+      .limit(POST_PAGE_SIZE)
       .lean()
       .exec();
 
-    const availableMonthsQuery = this.postDraftModel.aggregate<{
+    const availableMonthsQuery = this.postModel.aggregate<{
       month: string;
     }>([
       {
@@ -379,7 +415,7 @@ export class PostService {
       },
     ]);
 
-    const connectedAccountIdsQuery = this.postDraftModel.distinct(
+    const connectedAccountIdsQuery = this.postModel.distinct(
       'connectedAccount',
       { user: user._id },
     );
@@ -395,7 +431,11 @@ export class PostService {
       data: posts,
       filters: {
         availableMonths: availableMonthsResult.map((item) => item.month),
-        connectedAccountIds: connectedAccountIds.map((id) => id.toString()),
+        connectedAccountIds: (
+          connectedAccountIds as unknown as Array<
+            ConnectedAccount | Types.ObjectId
+          >
+        ).map((id) => this.referenceId(id)),
       },
     };
   }
@@ -406,7 +446,7 @@ export class PostService {
       throw new NotFoundException('Post not found');
     }
 
-    if (post.user.toString() !== user._id.toString()) {
+    if (this.referenceId(post.user) !== user._id.toString()) {
       throw new ForbiddenException('You are not authorized to edit this post');
     }
 
@@ -415,12 +455,12 @@ export class PostService {
   }
 
   async deletePost(user: User, postId: string) {
-    const post = await this.postDraftModel.findById(postId);
+    const post = await this.postModel.findById(postId);
     if (!post) {
       throw new NotFoundException('Post not found');
     }
 
-    if (post.user.toString() !== user._id.toString()) {
+    if (this.referenceId(post.user) !== user._id.toString()) {
       throw new ForbiddenException(
         'You are not authorized to delete this post',
       );
@@ -428,17 +468,17 @@ export class PostService {
 
     const connectedAccount = await this.getOwnedLinkedinConnectedAccount(
       user._id.toString(),
-      post.connectedAccount.toString(),
+      this.referenceId(post.connectedAccount),
     );
     const canUseLinkedinAccount =
       this.isLinkedinAccountUsable(connectedAccount);
-    if (post.status === PostDraftStatus.PUBLISHED && !canUseLinkedinAccount) {
+    if (post.status === PostStatus.PUBLISHED && !canUseLinkedinAccount) {
       throw new ConflictException(
         'Reconnect account to delete published posts from LinkedIn safely.',
       );
     }
 
-    if (post.status === PostDraftStatus.SCHEDULED) {
+    if (post.status === PostStatus.SCHEDULED) {
       const scheduledJob = await this.scheduleQueue.queue.getJob(
         post._id.toString(),
       );
@@ -447,7 +487,7 @@ export class PostService {
       }
     }
 
-    if (post.status === PostDraftStatus.PUBLISHED && post.channelPostId) {
+    if (post.status === PostStatus.PUBLISHED && post.channelPostId) {
       const accessToken = await this.encryptionService.decrypt(
         connectedAccount.accessToken!,
       );
@@ -462,22 +502,43 @@ export class PostService {
       });
     }
 
-    return this.postDraftModel
-      .deleteOne({ _id: new Types.ObjectId(postId) })
-      .exec();
+    return this.postModel.deleteOne({ _id: new Types.ObjectId(postId) }).exec();
   }
 
   async getPost(user: User, postId: string) {
-    const post = await this.postDraftModel.findById(postId);
+    const post = await this.postModel.findById(postId);
     if (!post) {
       throw new NotFoundException('Post not found');
     }
 
-    if (post.user.toString() !== user._id.toString()) {
+    if (this.referenceId(post.user) !== user._id.toString()) {
       throw new ForbiddenException('You are not authorized to view this post');
     }
 
-    return post;
+    const artifacts = await Promise.all(
+      post.artifacts.map(async (reference) => {
+        const artifact = await this.artifactModel.findById(reference.artifact);
+        const version = artifact?.versions.find(
+          (candidate) => candidate.version === reference.version,
+        );
+        if (!artifact || !version) {
+          throw new NotFoundException('Source artifact version not found');
+        }
+
+        const artifactObject = artifact.toObject() as unknown as Record<
+          string,
+          unknown
+        >;
+        const artifactMetadata = { ...artifactObject };
+        delete artifactMetadata.versions;
+        return { artifact: artifactMetadata, version };
+      }),
+    );
+
+    return {
+      ...(post.toObject() as unknown as Record<string, unknown>),
+      artifacts,
+    };
   }
 
   async publishOnLinkedIn(user: User, postId: string) {
@@ -486,7 +547,7 @@ export class PostService {
       throw new NotFoundException('Post not found');
     }
 
-    if (post.user.toString() !== user._id.toString()) {
+    if (this.referenceId(post.user) !== user._id.toString()) {
       throw new ForbiddenException(
         'You are not authorized to publish this post',
       );
@@ -498,7 +559,7 @@ export class PostService {
 
     const connectedAccount = await this.getOwnedUsableLinkedinConnectedAccount(
       user._id.toString(),
-      post.connectedAccount.toString(),
+      this.referenceId(post.connectedAccount),
       'publish posts',
     );
 
@@ -590,53 +651,67 @@ export class PostService {
   }
 
   async schedulePost(user: User, postId: string, dto: SchedulePostDto) {
-    const post = await this.postDraftModel.findById(postId);
+    const post = await this.postModel.findById(postId);
     if (!post) {
       throw new NotFoundException('Post not found');
     }
 
-    if (post.user.toString() !== user._id.toString()) {
+    if (this.referenceId(post.user) !== user._id.toString()) {
       throw new ForbiddenException(
         'You are not authorized to schedule this post',
       );
     }
 
-    if (post.status === PostDraftStatus.PUBLISHED) {
+    if (post.status === PostStatus.PUBLISHED) {
       throw new BadRequestException('Post is already published');
+    }
+
+    if (
+      post.status !== PostStatus.SCHEDULED &&
+      post.status !== PostStatus.FAILED
+    ) {
+      throw new BadRequestException('Post cannot be scheduled');
+    }
+
+    const scheduledDate = new Date(dto.scheduledAt);
+    const delay = scheduledDate.getTime() - Date.now();
+    if (delay <= 0) {
+      throw new BadRequestException('Scheduled time must be in the future');
     }
 
     await this.getOwnedUsableLinkedinConnectedAccount(
       user._id.toString(),
-      post.connectedAccount.toString(),
+      this.referenceId(post.connectedAccount),
       'schedule posts',
     );
 
-    const isFirstTimeSchedule = post.status !== PostDraftStatus.SCHEDULED;
+    const legacyScheduleWasCounted =
+      post.scheduledPostUsageCounted === undefined &&
+      (post.status === PostStatus.SCHEDULED || Boolean(post.scheduledAt));
+    const usageWasCounted =
+      post.scheduledPostUsageCounted === true ||
+      legacyScheduleWasCounted ||
+      (await this.featureGatingService.hasScheduledPostUsage(
+        user._id.toString(),
+        post._id.toString(),
+      ));
+    const isFirstTimeSchedule = !usageWasCounted;
     if (isFirstTimeSchedule) {
       await this.featureGatingService.assertScheduledPostQuota(
         user._id.toString(),
       );
     }
 
-    const scheduledDate = new Date(dto.scheduledTime);
-    const now = new Date();
-    const delay = scheduledDate.getTime() - now.getTime();
-
-    if (delay <= 0) {
-      throw new BadRequestException('Scheduled time must be in the future');
+    const scheduledJob = await this.scheduleQueue.queue.getJob(
+      post._id.toString(),
+    );
+    if (scheduledJob) {
+      await scheduledJob.remove();
     }
 
-    if (post.status === PostDraftStatus.SCHEDULED) {
-      const scheduledJob = await this.scheduleQueue.queue.getJob(
-        post._id.toString(),
-      );
-      if (scheduledJob) {
-        await scheduledJob.remove();
-      }
-    }
-
-    post.status = PostDraftStatus.SCHEDULED;
+    post.status = PostStatus.SCHEDULED;
     post.scheduledAt = scheduledDate;
+    post.failureReason = undefined;
     await post.save();
 
     await this.scheduleQueue.addScheduleJob(
@@ -648,7 +723,13 @@ export class PostService {
     if (isFirstTimeSchedule) {
       await this.featureGatingService.incrementScheduledPostUsage(
         user._id.toString(),
+        post._id.toString(),
       );
+    }
+
+    if (!post.scheduledPostUsageCounted) {
+      post.scheduledPostUsageCounted = true;
+      await post.save();
     }
 
     return post;
@@ -1021,7 +1102,7 @@ export class PostService {
       throw new NotFoundException('Connected account not found');
     }
 
-    if (connectedAccount.user.toString() !== user._id.toString()) {
+    if (this.referenceId(connectedAccount.user) !== user._id.toString()) {
       throw new ForbiddenException(
         'You are not authorized to view metrics for this account',
       );
@@ -1030,7 +1111,10 @@ export class PostService {
     const sixMonthsAgo = new Date();
     sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
 
-    const metrics = await this.postDraftModel.aggregate([
+    const metrics = await this.postModel.aggregate<{
+      month: string;
+      count: number;
+    }>([
       {
         $match: {
           user: user._id,

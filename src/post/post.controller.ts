@@ -22,6 +22,7 @@ import {
   InitiateMediaUploadDto,
   CompleteMediaUploadDto,
   CreatePostDto,
+  GetPostsQueryDto,
 } from './dto';
 import { SubscriptionAccessGuard } from '../common/guards';
 import { ClerkAuthGuard } from '../auth/clerk';
@@ -125,14 +126,14 @@ export class PostController {
 
   @HttpCode(HttpStatus.OK)
   @Post(':id/publish')
-  async publishOnLinkedIn(
+  async publishPost(
     @GetUser() user: User,
     @Param('id') id: string,
   ): Promise<IAppResponse> {
     return {
       statusCode: HttpStatus.OK,
       message: 'Post published successfully',
-      data: await this.postService.publishOnLinkedIn(user, id),
+      data: await this.postService.publishPostNow(user, id),
     };
   }
 
@@ -162,15 +163,14 @@ export class PostController {
   @Get()
   async getPosts(
     @GetUser() user: User,
-    @Query('accountConnected') accountConnected?: string,
-    @Query('status') status?: string,
-    @Query('month') month?: string,
+    @Query() query: GetPostsQueryDto,
   ): Promise<IAppResponse> {
     const result: GetPostsResult = await this.postService.getPosts(
       user,
-      accountConnected,
-      status,
-      month,
+      query.connectedAccount,
+      query.status,
+      query.month,
+      query.page,
     );
 
     return {

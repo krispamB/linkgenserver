@@ -19,6 +19,12 @@ import {
 } from './feature-gating.constants';
 import { FeatureGateForbiddenException } from './feature-gating.exception';
 
+const isDuplicateKeyError = (error: unknown): boolean =>
+  typeof error === 'object' &&
+  error !== null &&
+  'code' in error &&
+  error.code === 11000;
+
 @Injectable()
 export class FeatureGatingService {
   constructor(
@@ -117,18 +123,38 @@ export class FeatureGatingService {
     }
   }
 
-  async incrementScheduledPostUsage(userId: string): Promise<void> {
+  async hasScheduledPostUsage(
+    userId: string,
+    postId: string,
+  ): Promise<boolean> {
+    const usage = await this.usageModel
+      .findOne({
+        user_id: new Types.ObjectId(userId),
+        feature: FEATURE_KEYS.SCHEDULED_POSTS,
+        scheduledPostIds: new Types.ObjectId(postId),
+      })
+      .lean();
+    return usage !== null;
+  }
+
+  async incrementScheduledPostUsage(
+    userId: string,
+    postId: string,
+  ): Promise<void> {
     const periodStart = await this.resolveUsagePeriodStart(userId);
     const userObjectId = new Types.ObjectId(userId);
+    const postObjectId = new Types.ObjectId(postId);
 
     const query = {
       user_id: userObjectId,
       feature: FEATURE_KEYS.SCHEDULED_POSTS,
       periodStart,
+      scheduledPostIds: { $ne: postObjectId },
     };
 
     const update = {
       $inc: { count: 1 },
+      $addToSet: { scheduledPostIds: postObjectId },
       $setOnInsert: {
         user_id: userObjectId,
         feature: FEATURE_KEYS.SCHEDULED_POSTS,
@@ -138,9 +164,9 @@ export class FeatureGatingService {
 
     try {
       await this.usageModel.updateOne(query, update, { upsert: true });
-    } catch (error: any) {
-      if (error?.code === 11000) {
-        await this.usageModel.updateOne(query, { $inc: { count: 1 } });
+    } catch (error: unknown) {
+      if (isDuplicateKeyError(error)) {
+        await this.usageModel.updateOne(query, update);
         return;
       }
       throw error;
@@ -206,8 +232,8 @@ export class FeatureGatingService {
 
     try {
       await this.usageModel.updateOne(query, update, { upsert: true });
-    } catch (error: any) {
-      if (error?.code === 11000) {
+    } catch (error: unknown) {
+      if (isDuplicateKeyError(error)) {
         await this.usageModel.updateOne(query, {
           $inc: { count: credits },
         });

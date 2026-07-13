@@ -80,13 +80,14 @@ describe('PostService.getPosts', () => {
 
     const exec = jest.fn();
     const lean = jest.fn().mockReturnValue({ exec });
-    const sort = jest.fn().mockReturnValue({ lean });
-    const select = jest.fn().mockReturnValue({ sort });
-    const find = jest.fn().mockReturnValue({ select });
+    const limit = jest.fn().mockReturnValue({ lean });
+    const skip = jest.fn().mockReturnValue({ limit });
+    const sort = jest.fn().mockReturnValue({ skip });
+    const find = jest.fn().mockReturnValue({ sort });
     const aggregate = jest.fn();
     const distinct = jest.fn();
 
-    (service as any).postDraftModel = {
+    (service as any).postModel = {
       find,
       aggregate,
       distinct,
@@ -96,8 +97,9 @@ describe('PostService.getPosts', () => {
       service,
       mocks: {
         find,
-        select,
         sort,
+        skip,
+        limit,
         lean,
         exec,
         aggregate,
@@ -122,16 +124,18 @@ describe('PostService.getPosts', () => {
     const result = await service.getPosts(
       { _id: userId } as any,
       connectedAccountId.toString(),
-      'DRAFT',
+      'SCHEDULED',
       '2026-01',
+      2,
     );
 
     expect(mocks.find).toHaveBeenCalledTimes(1);
-    expect(mocks.select).toHaveBeenCalledWith('-userIntent -compressionResult');
+    expect(mocks.skip).toHaveBeenCalledWith(20);
+    expect(mocks.limit).toHaveBeenCalledWith(20);
     expect(mocks.lean).toHaveBeenCalledTimes(1);
     const filter = mocks.find.mock.calls[0][0];
     expect(filter.user).toEqual(userId);
-    expect(filter.status).toBe('DRAFT');
+    expect(filter.status).toBe('SCHEDULED');
     expect(filter.connectedAccount).toEqual(connectedAccountId);
     expect(filter.updatedAt.$gte).toEqual(new Date(2026, 0, 1));
     expect(filter.updatedAt.$lt).toEqual(new Date(2026, 1, 1));
@@ -180,6 +184,103 @@ describe('PostService.getPosts', () => {
         availableMonths: [],
         connectedAccountIds: [],
       },
+    });
+  });
+});
+
+describe('PostService.getPost', () => {
+  it('should resolve the pinned artifact version when the post is owned', async () => {
+    const service = Object.create(PostService.prototype) as PostService;
+    const userId = new Types.ObjectId();
+    const postId = new Types.ObjectId();
+    const artifactId = new Types.ObjectId();
+    const post = {
+      _id: postId,
+      user: userId,
+      artifacts: [{ artifact: artifactId, version: 1 }],
+      toObject: () => ({
+        _id: postId,
+        user: userId,
+        artifacts: [{ artifact: artifactId, version: 1 }],
+      }),
+    };
+    const approvedVersion = {
+      version: 1,
+      status: 'READY',
+      content: { commentary: 'Approved copy' },
+    };
+    const artifact = {
+      _id: artifactId,
+      type: 'POST',
+      versions: [
+        approvedVersion,
+        { version: 2, status: 'READY', content: { commentary: 'New copy' } },
+      ],
+      toObject: () => ({
+        _id: artifactId,
+        type: 'POST',
+        versions: [approvedVersion],
+      }),
+    };
+    const findPostById = jest.fn().mockResolvedValue(post);
+    const findArtifactById = jest.fn().mockResolvedValue(artifact);
+    Object.assign(service as any, {
+      postModel: { findById: findPostById },
+      artifactModel: { findById: findArtifactById },
+    });
+
+    const result = await service.getPost(
+      { _id: userId } as any,
+      postId.toString(),
+    );
+
+    expect(findArtifactById).toHaveBeenCalledWith(artifactId);
+    expect(result.artifacts).toEqual([
+      {
+        artifact: { _id: artifactId, type: 'POST' },
+        version: approvedVersion,
+      },
+    ]);
+  });
+});
+
+describe('PostService.getPostMetrics', () => {
+  it('should aggregate post counts when the connected account is owned', async () => {
+    const service = Object.create(PostService.prototype) as PostService;
+    const userId = new Types.ObjectId();
+    const accountId = new Types.ObjectId();
+    const aggregate = jest.fn().mockResolvedValue([
+      { month: '2026-05', count: 2 },
+      { month: '2026-06', count: 1 },
+    ]);
+    Object.assign(service as any, {
+      connectedAccountModel: {
+        findById: jest.fn().mockResolvedValue({ user: userId }),
+      },
+      postModel: { aggregate },
+    });
+
+    const result = await service.getPostMetrics(
+      { _id: userId } as any,
+      accountId.toString(),
+    );
+
+    expect(aggregate).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        expect.objectContaining({
+          $match: expect.objectContaining({
+            user: userId,
+            connectedAccount: accountId,
+          }),
+        }),
+      ]),
+    );
+    expect(result).toEqual({
+      total: 3,
+      monthly: [
+        { month: '2026-05', count: 2 },
+        { month: '2026-06', count: 1 },
+      ],
     });
   });
 });
@@ -306,8 +407,9 @@ describe('PostService.schedulePost', () => {
     const getJob = jest.fn();
     const assertScheduledPostQuota = jest.fn().mockResolvedValue(undefined);
     const incrementScheduledPostUsage = jest.fn().mockResolvedValue(undefined);
+    const hasScheduledPostUsage = jest.fn().mockResolvedValue(false);
 
-    (service as any).postDraftModel = {
+    (service as any).postModel = {
       findById,
     };
     (service as any).scheduleQueue = {
@@ -322,6 +424,7 @@ describe('PostService.schedulePost', () => {
     (service as any).featureGatingService = {
       assertScheduledPostQuota,
       incrementScheduledPostUsage,
+      hasScheduledPostUsage,
     };
 
     return {
@@ -334,20 +437,22 @@ describe('PostService.schedulePost', () => {
         getJob,
         assertScheduledPostQuota,
         incrementScheduledPostUsage,
+        hasScheduledPostUsage,
       },
     };
   };
 
-  it('schedules a draft post without attempting to remove an existing queue job', async () => {
+  it('should charge first-time scheduling usage when a FAILED post is scheduled', async () => {
     const { service, mocks } = createService();
     const userId = new Types.ObjectId();
     const postId = new Types.ObjectId();
-    const scheduledTime = new Date(Date.now() + 5 * 60 * 1000).toISOString();
+    const scheduledAt = new Date(Date.now() + 5 * 60 * 1000).toISOString();
     const post = {
       _id: postId,
       user: userId,
       connectedAccount: new Types.ObjectId(),
-      status: 'DRAFT',
+      status: 'FAILED',
+      scheduledPostUsageCounted: false,
       save: mocks.save,
     } as any;
 
@@ -362,10 +467,10 @@ describe('PostService.schedulePost', () => {
     const result = await service.schedulePost(
       { _id: userId } as any,
       postId.toString(),
-      { scheduledTime } as any,
+      { scheduledAt } as any,
     );
 
-    expect(mocks.getJob).not.toHaveBeenCalled();
+    expect(mocks.getJob).toHaveBeenCalledWith(postId.toString());
     expect(mocks.assertScheduledPostQuota).toHaveBeenCalledWith(
       userId.toString(),
     );
@@ -376,18 +481,51 @@ describe('PostService.schedulePost', () => {
     );
     expect(mocks.incrementScheduledPostUsage).toHaveBeenCalledWith(
       userId.toString(),
+      postId.toString(),
     );
     expect(post.status).toBe('SCHEDULED');
-    expect(post.scheduledAt).toEqual(new Date(scheduledTime));
-    expect(mocks.save).toHaveBeenCalledTimes(1);
+    expect(post.scheduledAt).toEqual(new Date(scheduledAt));
+    expect(post.scheduledPostUsageCounted).toBe(true);
+    expect(mocks.save).toHaveBeenCalledTimes(2);
     expect(result).toBe(post);
+  });
+
+  it('should avoid recharging when prior usage exists without a persisted post marker', async () => {
+    const { service, mocks } = createService();
+    const userId = new Types.ObjectId();
+    const postId = new Types.ObjectId();
+    const scheduledAt = new Date(Date.now() + 5 * 60 * 1000).toISOString();
+    const post = {
+      _id: postId,
+      user: userId,
+      connectedAccount: new Types.ObjectId(),
+      status: 'FAILED',
+      scheduledPostUsageCounted: false,
+      save: mocks.save,
+    } as any;
+    mocks.findById.mockResolvedValue(post);
+    mocks.findConnectedAccountById.mockResolvedValue({
+      user: userId,
+      provider: 'LINKEDIN',
+      isActive: true,
+      accessToken: 'encrypted-token',
+    });
+    mocks.hasScheduledPostUsage.mockResolvedValue(true);
+
+    await service.schedulePost({ _id: userId } as any, postId.toString(), {
+      scheduledAt,
+    } as any);
+
+    expect(mocks.assertScheduledPostQuota).not.toHaveBeenCalled();
+    expect(mocks.incrementScheduledPostUsage).not.toHaveBeenCalled();
+    expect(post.scheduledPostUsageCounted).toBe(true);
   });
 
   it('reschedules a scheduled post by removing the existing job first', async () => {
     const { service, mocks } = createService();
     const userId = new Types.ObjectId();
     const postId = new Types.ObjectId();
-    const scheduledTime = new Date(Date.now() + 10 * 60 * 1000).toISOString();
+    const scheduledAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
     const remove = jest.fn().mockResolvedValue(undefined);
     const post = {
       _id: postId,
@@ -407,7 +545,7 @@ describe('PostService.schedulePost', () => {
     mocks.getJob.mockResolvedValue({ remove });
 
     await service.schedulePost({ _id: userId } as any, postId.toString(), {
-      scheduledTime,
+      scheduledAt,
     } as any);
 
     expect(mocks.assertScheduledPostQuota).not.toHaveBeenCalled();
@@ -419,19 +557,20 @@ describe('PostService.schedulePost', () => {
       expect.any(Number),
     );
     expect(mocks.incrementScheduledPostUsage).not.toHaveBeenCalled();
-    expect(post.scheduledAt).toEqual(new Date(scheduledTime));
+    expect(post.scheduledAt).toEqual(new Date(scheduledAt));
   });
 
   it('reschedules even when the old scheduled job is already missing', async () => {
     const { service, mocks } = createService();
     const userId = new Types.ObjectId();
     const postId = new Types.ObjectId();
-    const scheduledTime = new Date(Date.now() + 10 * 60 * 1000).toISOString();
+    const scheduledAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
     const post = {
       _id: postId,
       user: userId,
       connectedAccount: new Types.ObjectId(),
       status: 'SCHEDULED',
+      scheduledPostUsageCounted: true,
       save: mocks.save,
     } as any;
 
@@ -445,7 +584,7 @@ describe('PostService.schedulePost', () => {
     mocks.getJob.mockResolvedValue(null);
 
     await service.schedulePost({ _id: userId } as any, postId.toString(), {
-      scheduledTime,
+      scheduledAt,
     } as any);
 
     expect(mocks.assertScheduledPostQuota).not.toHaveBeenCalled();
@@ -458,13 +597,14 @@ describe('PostService.schedulePost', () => {
     const { service, mocks } = createService();
     const userId = new Types.ObjectId();
     const postId = new Types.ObjectId();
-    const scheduledTime = new Date(Date.now() + 10 * 60 * 1000).toISOString();
+    const scheduledAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
     const remove = jest.fn().mockRejectedValue(new Error('remove failed'));
     const post = {
       _id: postId,
       user: userId,
       connectedAccount: new Types.ObjectId(),
       status: 'SCHEDULED',
+      scheduledPostUsageCounted: true,
       save: mocks.save,
     } as any;
 
@@ -479,7 +619,7 @@ describe('PostService.schedulePost', () => {
 
     await expect(
       service.schedulePost({ _id: userId } as any, postId.toString(), {
-        scheduledTime,
+        scheduledAt,
       } as any),
     ).rejects.toThrow('remove failed');
     expect(mocks.assertScheduledPostQuota).not.toHaveBeenCalled();
@@ -491,7 +631,7 @@ describe('PostService.schedulePost', () => {
     const { service, mocks } = createService();
     const userId = new Types.ObjectId();
     const postId = new Types.ObjectId();
-    const scheduledTime = new Date(Date.now() + 10 * 60 * 1000).toISOString();
+    const scheduledAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
     const post = {
       _id: postId,
       user: userId,
@@ -504,7 +644,7 @@ describe('PostService.schedulePost', () => {
 
     await expect(
       service.schedulePost({ _id: userId } as any, postId.toString(), {
-        scheduledTime,
+        scheduledAt,
       } as any),
     ).rejects.toThrow('Post is already published');
     expect(mocks.assertScheduledPostQuota).not.toHaveBeenCalled();
@@ -516,12 +656,13 @@ describe('PostService.schedulePost', () => {
     const { service, mocks } = createService();
     const userId = new Types.ObjectId();
     const postId = new Types.ObjectId();
-    const scheduledTime = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+    const scheduledAt = new Date(Date.now() - 5 * 60 * 1000).toISOString();
     const post = {
       _id: postId,
       user: userId,
       connectedAccount: new Types.ObjectId(),
-      status: 'DRAFT',
+      status: 'FAILED',
+      scheduledPostUsageCounted: false,
       save: mocks.save,
     } as any;
 
@@ -535,12 +676,10 @@ describe('PostService.schedulePost', () => {
 
     await expect(
       service.schedulePost({ _id: userId } as any, postId.toString(), {
-        scheduledTime,
+        scheduledAt,
       } as any),
     ).rejects.toThrow('Scheduled time must be in the future');
-    expect(mocks.assertScheduledPostQuota).toHaveBeenCalledWith(
-      userId.toString(),
-    );
+    expect(mocks.assertScheduledPostQuota).not.toHaveBeenCalled();
     expect(mocks.addScheduleJob).not.toHaveBeenCalled();
     expect(mocks.incrementScheduledPostUsage).not.toHaveBeenCalled();
   });
@@ -549,12 +688,13 @@ describe('PostService.schedulePost', () => {
     const { service, mocks } = createService();
     const userId = new Types.ObjectId();
     const postId = new Types.ObjectId();
-    const scheduledTime = new Date(Date.now() + 10 * 60 * 1000).toISOString();
+    const scheduledAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
     const post = {
       _id: postId,
       user: userId,
       connectedAccount: new Types.ObjectId(),
-      status: 'DRAFT',
+      status: 'FAILED',
+      scheduledPostUsageCounted: false,
       save: mocks.save,
     } as any;
 
@@ -569,7 +709,7 @@ describe('PostService.schedulePost', () => {
 
     await expect(
       service.schedulePost({ _id: userId } as any, postId.toString(), {
-        scheduledTime,
+        scheduledAt,
       } as any),
     ).rejects.toThrow('queue unavailable');
     expect(mocks.assertScheduledPostQuota).toHaveBeenCalledWith(
@@ -626,8 +766,10 @@ describe('PostService artifact publishing', () => {
       findArtifactById: jest.fn().mockResolvedValue(artifact),
       findAccountById: jest.fn().mockResolvedValue(account),
       addScheduleJob: jest.fn().mockResolvedValue(undefined),
+      getScheduleJob: jest.fn().mockResolvedValue(null),
       assertScheduledPostQuota: jest.fn().mockResolvedValue(undefined),
       incrementScheduledPostUsage: jest.fn().mockResolvedValue(undefined),
+      hasScheduledPostUsage: jest.fn().mockResolvedValue(false),
       assertCompanyPagesAccess: jest.fn().mockResolvedValue(undefined),
       decrypt: jest.fn().mockResolvedValue('token'),
       uploadDocument: jest.fn().mockResolvedValue('urn:li:document:1'),
@@ -638,10 +780,14 @@ describe('PostService artifact publishing', () => {
       }),
       artifactModel: { findById: mocks.findArtifactById },
       connectedAccountModel: { findById: mocks.findAccountById },
-      scheduleQueue: { addScheduleJob: mocks.addScheduleJob },
+      scheduleQueue: {
+        addScheduleJob: mocks.addScheduleJob,
+        queue: { getJob: mocks.getScheduleJob },
+      },
       featureGatingService: {
         assertScheduledPostQuota: mocks.assertScheduledPostQuota,
         incrementScheduledPostUsage: mocks.incrementScheduledPostUsage,
+        hasScheduledPostUsage: mocks.hasScheduledPostUsage,
         assertCompanyPagesAccess: mocks.assertCompanyPagesAccess,
       },
       encryptionService: { decrypt: mocks.decrypt },
@@ -691,6 +837,8 @@ describe('PostService artifact publishing', () => {
       expect(result.status).toBe('PUBLISHED');
       expect(result.channelPostId).toBe('urn:li:share:123');
       expect(result).toBe(publishedDocument);
+      expect(mocks.assertScheduledPostQuota).not.toHaveBeenCalled();
+      expect(mocks.incrementScheduledPostUsage).not.toHaveBeenCalled();
     });
 
     it('should reject a GENERATING artifact version', async () => {
@@ -715,6 +863,32 @@ describe('PostService artifact publishing', () => {
           connectedAccount: fixtures.accountId.toString(),
         }),
       ).rejects.toBeInstanceOf(ForbiddenException);
+    });
+
+    it('should schedule a pinned version and count usage when scheduledAt is present', async () => {
+      const { service, mocks, fixtures } = makeService();
+      const scheduledAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
+
+      const result = await service.createPost({ _id: fixtures.userId } as any, {
+        artifactId: fixtures.artifactId.toString(),
+        connectedAccount: fixtures.accountId.toString(),
+        scheduledAt,
+      });
+
+      expect(mocks.assertScheduledPostQuota).toHaveBeenCalledWith(
+        fixtures.userId.toString(),
+      );
+      expect(mocks.addScheduleJob).toHaveBeenCalledWith(
+        fixtures.postId.toString(),
+        fixtures.userId.toString(),
+        expect.any(Number),
+      );
+      expect(mocks.incrementScheduledPostUsage).toHaveBeenCalledWith(
+        fixtures.userId.toString(),
+        fixtures.postId.toString(),
+      );
+      expect(result.scheduledPostUsageCounted).toBe(true);
+      expect(apiFetch).not.toHaveBeenCalled();
     });
   });
 
@@ -815,6 +989,38 @@ describe('PostService artifact publishing', () => {
       ).rejects.toThrow('Failed to publish post');
       expect(fixtures.post.status).toBe('FAILED');
       expect(fixtures.post.failureReason).toBe('Failed to publish post');
+    });
+  });
+
+  describe('publishPostNow', () => {
+    it('should remove the pending job when publishing an owned SCHEDULED post', async () => {
+      const { service, mocks, fixtures } = makeService();
+      const remove = jest.fn().mockResolvedValue(undefined);
+      mocks.getScheduleJob.mockResolvedValue({ remove });
+
+      const result = await service.publishPostNow(
+        { _id: fixtures.userId } as any,
+        fixtures.postId.toString(),
+      );
+
+      expect(mocks.getScheduleJob).toHaveBeenCalledWith(
+        fixtures.postId.toString(),
+      );
+      expect(remove).toHaveBeenCalledTimes(1);
+      expect(result.status).toBe('PUBLISHED');
+    });
+
+    it('should reject publish-now when the post belongs to another user', async () => {
+      const { service, mocks, fixtures } = makeService();
+
+      await expect(
+        service.publishPostNow(
+          { _id: new Types.ObjectId() } as any,
+          fixtures.postId.toString(),
+        ),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(mocks.getScheduleJob).not.toHaveBeenCalled();
+      expect(apiFetch).not.toHaveBeenCalled();
     });
   });
 });
@@ -1138,8 +1344,9 @@ describe('PostService.deletePost', () => {
     const findConnectedAccountById = jest.fn();
     const decrypt = jest.fn().mockResolvedValue('token');
     const getJob = jest.fn();
+    const decrementScheduledPostUsage = jest.fn();
 
-    (service as any).postDraftModel = {
+    (service as any).postModel = {
       findById,
       deleteOne,
     };
@@ -1154,6 +1361,9 @@ describe('PostService.deletePost', () => {
         getJob,
       },
     };
+    (service as any).featureGatingService = {
+      decrementScheduledPostUsage,
+    };
     (service as any).LINKEDIN_API_BASE = 'https://api.linkedin.com/rest';
 
     return {
@@ -1165,6 +1375,7 @@ describe('PostService.deletePost', () => {
         findConnectedAccountById,
         decrypt,
         getJob,
+        decrementScheduledPostUsage,
       },
     };
   };
@@ -1199,6 +1410,7 @@ describe('PostService.deletePost', () => {
     expect(mocks.getJob).toHaveBeenCalledWith(postId.toString());
     expect(remove).toHaveBeenCalledTimes(1);
     expect(mocks.deleteOne).toHaveBeenCalledTimes(1);
+    expect(mocks.decrementScheduledPostUsage).not.toHaveBeenCalled();
     const deleteArg = mocks.deleteOne.mock.calls[0][0];
     expect(deleteArg._id.toString()).toBe(postId.toString());
   });
@@ -1256,7 +1468,7 @@ describe('PostService.deletePost', () => {
     expect(mocks.deleteOne).not.toHaveBeenCalled();
   });
 
-  it('keeps non-scheduled delete behavior unchanged', async () => {
+  it('should avoid queue lookup when deleting a FAILED post', async () => {
     const { service, mocks } = createService();
     const userId = new Types.ObjectId();
     const postId = new Types.ObjectId();
@@ -1264,7 +1476,7 @@ describe('PostService.deletePost', () => {
       _id: postId,
       user: userId,
       connectedAccount: new Types.ObjectId(),
-      status: 'DRAFT',
+      status: 'FAILED',
     } as any;
 
     mocks.findById.mockResolvedValue(post);
@@ -1281,7 +1493,7 @@ describe('PostService.deletePost', () => {
     expect(mocks.deleteOne).toHaveBeenCalledTimes(1);
   });
 
-  it('still calls LinkedIn delete for published posts', async () => {
+  it('should delete the LinkedIn post when deleting a published record', async () => {
     const { service, mocks } = createService();
     const userId = new Types.ObjectId();
     const postId = new Types.ObjectId();
@@ -1310,7 +1522,7 @@ describe('PostService.deletePost', () => {
     expect(mocks.deleteOne).toHaveBeenCalledTimes(1);
   });
 
-  it('blocks deleting published posts when account is disconnected', async () => {
+  it('should block deletion when a published post account is disconnected', async () => {
     const { service, mocks } = createService();
     const userId = new Types.ObjectId();
     const postId = new Types.ObjectId();
