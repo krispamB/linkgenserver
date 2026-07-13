@@ -311,6 +311,45 @@ describe('FeatureGatingService', () => {
     jest.useRealTimers();
   });
 
+  describe('getDashboardUsage', () => {
+    it('should return a distinct zero credit limit when AI is unavailable on the plan', async () => {
+      const { service, mocks } = makeService();
+      const userId = new Types.ObjectId().toString();
+      const defaultTierId = new Types.ObjectId();
+
+      mocks.subscriptionModel.findOne.mockReturnValue({
+        sort: jest.fn().mockReturnValue({
+          lean: jest.fn().mockResolvedValue(null),
+        }),
+      });
+      mocks.tierModel.findOne.mockReturnValue({
+        lean: jest.fn().mockResolvedValue({
+          _id: defaultTierId,
+          name: 'Free',
+          limits: {
+            credits: 0,
+            connected_accounts: 1,
+            scheduled_posts: 1,
+          },
+        }),
+      });
+      mocks.connectedAccountModel.countDocuments.mockResolvedValue(0);
+      mocks.usageModel.find.mockReturnValue({
+        select: jest.fn().mockReturnValue({
+          lean: jest.fn().mockResolvedValue([]),
+        }),
+      });
+
+      const result = await service.getDashboardUsage(userId);
+
+      expect(result.usage.credits).toEqual({
+        used: 0,
+        limit: 0,
+        remaining: 0,
+      });
+    });
+  });
+
   it('falls back to UTC month start for free/default users', async () => {
     const { service, mocks } = makeService();
     const userId = new Types.ObjectId().toString();
@@ -440,7 +479,7 @@ describe('FeatureGatingService', () => {
       mocks.usageModel.findOne.mockReturnValue({
         lean: jest.fn().mockResolvedValue({ count: currentUsage }),
       });
-      return { service, mocks, userId };
+      return { service, mocks, tier, userId };
     };
 
     it('should pass when any headroom remains', async () => {
@@ -504,6 +543,20 @@ describe('FeatureGatingService', () => {
           upgradeHint: expect.stringContaining('used all your credits'),
         },
       });
+    });
+
+    it('should apply a tier upgrade immediately without resetting usage', async () => {
+      const { service, mocks, tier, userId } = setup(2000, 2000);
+
+      await expect(service.assertBalance(userId)).rejects.toMatchObject({
+        response: { limit: 2000, currentUsage: 2000 },
+      });
+
+      tier.name = 'Creator';
+      tier.limits.credits = 10000;
+
+      await expect(service.assertBalance(userId)).resolves.toBeUndefined();
+      expect(mocks.usageModel.findOne).toHaveBeenCalledTimes(2);
     });
   });
 
