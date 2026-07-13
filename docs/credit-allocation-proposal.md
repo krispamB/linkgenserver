@@ -1,6 +1,7 @@
 # Credit Allocation and Provider-Usage Pricing Proposal
 
-> Status: pricing proposal for review.
+> Status: approved launch policy; the Free allocation choice is recorded in
+> [free-credit-allocation-decision.md](./free-credit-allocation-decision.md).
 > Date: 2026-07-13.
 > Scope: free-tier allocation, Tavily research charges, Browserless rendering
 > charges, and the existing paid-tier ladder. No application code is changed by
@@ -48,17 +49,17 @@ At the current repository estimates, a no-research run is approximately:
   about 32 credits.
 - All three: about 80 credits, leaving roughly 40 credits for normal variation.
 
-This makes 120 credits a practical monthly grant for one post, one poll, and one
-document without research. It costs very little even at the conservative peg:
-120 credits correspond to $0.06 of provider cost before any vendor-plan
-discounts.
+This makes 120 credits a practical shared monthly grant for a useful mix of
+posts, polls, and documents without research. It costs very little even at the
+conservative peg: 120 credits correspond to $0.06 of provider cost before any
+vendor-plan discounts.
 
-Important product boundary: a shared credit balance alone cannot mathematically
-guarantee one artifact of each type. A user could spend all 120 credits on posts.
-If “one post + one poll + one document” is a hard promise, pair the 120-credit
-grant with three free monthly generation entitlements—one per artifact type—or
-reserve the expected credits for each type. If it is a best-effort allowance,
-120 shared credits is sufficient.
+The approved product boundary is a **shared best-effort allowance**, not a
+per-artifact guarantee. A user can spend all 120 credits on any supported mix.
+Product copy must therefore say “120 credits per month for AI posts, polls, and
+documents. Usage varies by what you create” and must not promise one artifact of
+each type. See the linked decision document for reset, exhaustion, and
+implementation semantics.
 
 Free users should never be allowed to turn on `withResearch`; otherwise the free
 grant becomes an uncontrolled Tavily subsidy. Research should be an explicit paid
