@@ -128,6 +128,77 @@ describe('FeatureGatingService', () => {
     );
   });
 
+  describe('assertResearchAccess', () => {
+    it('should reject research with the standard feature gate when the tier disables it', async () => {
+      const { service } = makeService();
+      const tier = {
+        _id: new Types.ObjectId(),
+        name: 'Free',
+        limits: { research: 0 },
+      } as any;
+      jest.spyOn(service, 'resolveEntitlementTier').mockResolvedValue(tier);
+
+      await expect(
+        service.assertResearchAccess(new Types.ObjectId().toString()),
+      ).rejects.toMatchObject({
+        response: {
+          code: 'FEATURE_LIMIT_EXCEEDED',
+          feature: 'research',
+          limit: 0,
+          currentUsage: 0,
+        },
+        status: 403,
+      });
+    });
+
+    it('should allow research when the paid tier enables it', async () => {
+      const { service } = makeService();
+      const tier = {
+        _id: new Types.ObjectId(),
+        name: 'Starter',
+        limits: { research: 1 },
+      } as any;
+      jest.spyOn(service, 'resolveEntitlementTier').mockResolvedValue(tier);
+
+      await expect(
+        service.assertResearchAccess(new Types.ObjectId().toString()),
+      ).resolves.toBeUndefined();
+    });
+
+    it('should reject research for a persisted legacy Free tier without a research field', async () => {
+      const { service } = makeService();
+      const tier = {
+        _id: new Types.ObjectId(),
+        name: 'Free',
+        monthlyPrice: 0,
+        limits: { credits: 120 },
+      } as any;
+      jest.spyOn(service, 'resolveEntitlementTier').mockResolvedValue(tier);
+
+      await expect(
+        service.assertResearchAccess(new Types.ObjectId().toString()),
+      ).rejects.toMatchObject({
+        response: { feature: 'research', limit: 0, currentUsage: 0 },
+        status: 403,
+      });
+    });
+
+    it('should allow research for a persisted legacy paid tier without a research field', async () => {
+      const { service } = makeService();
+      const tier = {
+        _id: new Types.ObjectId(),
+        name: 'Starter',
+        monthlyPrice: 9.99,
+        limits: { credits: 2000 },
+      } as any;
+      jest.spyOn(service, 'resolveEntitlementTier').mockResolvedValue(tier);
+
+      await expect(
+        service.assertResearchAccess(new Types.ObjectId().toString()),
+      ).resolves.toBeUndefined();
+    });
+  });
+
   it('blocks post scheduling when usage reaches the plan limit', async () => {
     const { service, mocks } = makeService();
     const userId = new Types.ObjectId().toString();

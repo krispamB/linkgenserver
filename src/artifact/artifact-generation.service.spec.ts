@@ -27,6 +27,11 @@ jest.mock(
   { virtual: true },
 );
 jest.mock(
+  'src/feature-gating/feature-gating.service',
+  () => ({ FeatureGatingService: class {} }),
+  { virtual: true },
+);
+jest.mock(
   'src/workflow/workflow-run.service',
   () => ({ WorkflowRunService: class {} }),
   { virtual: true },
@@ -55,6 +60,9 @@ describe('ArtifactGenerationService', () => {
     const creditMeter = {
       assertBalance: jest.fn().mockResolvedValue(undefined),
     };
+    const featureGating = {
+      assertResearchAccess: jest.fn().mockResolvedValue(undefined),
+    };
     const workflowQueue = {
       addArtifactRunJob: jest.fn().mockResolvedValue(undefined),
     };
@@ -63,6 +71,7 @@ describe('ArtifactGenerationService', () => {
       artifactService as any,
       workflowRunService as any,
       creditMeter as any,
+      featureGating as any,
       workflowQueue as any,
     );
 
@@ -78,6 +87,7 @@ describe('ArtifactGenerationService', () => {
         artifactService,
         workflowRunService,
         creditMeter,
+        featureGating,
         workflowQueue,
       },
       fixtures: { userId: 'user123', dto },
@@ -94,6 +104,50 @@ describe('ArtifactGenerationService', () => {
   });
 
   describe('launchInitialRun', () => {
+    it('should reject a research run before creating or queueing anything when the tier disables research', async () => {
+      mocks.featureGating.assertResearchAccess.mockRejectedValue(
+        new Error('FEATURE_LIMIT_EXCEEDED'),
+      );
+
+      await expect(
+        service.launchInitialRun(fixtures.userId, fixtures.dto),
+      ).rejects.toThrow('FEATURE_LIMIT_EXCEEDED');
+
+      expect(mocks.creditMeter.assertBalance).not.toHaveBeenCalled();
+      expect(mocks.artifactService.createArtifact).not.toHaveBeenCalled();
+      expect(mocks.workflowRunService.createRun).not.toHaveBeenCalled();
+      expect(mocks.workflowQueue.addArtifactRunJob).not.toHaveBeenCalled();
+    });
+
+    it.each([ArtifactType.POST, ArtifactType.POLL, ArtifactType.DOCUMENT])(
+      'should allow a paid research-enabled %s run to continue to the balance check',
+      async (type) => {
+        await service.launchInitialRun(fixtures.userId, {
+          ...fixtures.dto,
+          type,
+        });
+
+        expect(mocks.featureGating.assertResearchAccess).toHaveBeenCalledWith(
+          fixtures.userId,
+        );
+        expect(mocks.creditMeter.assertBalance).toHaveBeenCalledWith(
+          fixtures.userId,
+        );
+      },
+    );
+
+    it('should not require research access for a non-research run', async () => {
+      await service.launchInitialRun(fixtures.userId, {
+        ...fixtures.dto,
+        withResearch: false,
+      });
+
+      expect(mocks.featureGating.assertResearchAccess).not.toHaveBeenCalled();
+      expect(mocks.creditMeter.assertBalance).toHaveBeenCalledWith(
+        fixtures.userId,
+      );
+    });
+
     it('should return the artifactId and runId when the run is launched', async () => {
       await expect(
         service.launchInitialRun(fixtures.userId, fixtures.dto),

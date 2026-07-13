@@ -12,6 +12,7 @@ jest.mock(
 );
 
 import { ContentValidationError } from '../../agent/agent-runner.error';
+import { FeatureGateForbiddenException } from '../../feature-gating/feature-gating.exception';
 import type { BuildInput } from '../engine/workflow.types';
 import {
   ArtifactRunProcessor,
@@ -80,12 +81,16 @@ const makeProcessor = () => {
     toCredits: jest.fn().mockReturnValue(20),
     debit: jest.fn().mockResolvedValue(undefined),
   };
+  const featureGating = {
+    assertResearchAccess: jest.fn().mockResolvedValue(undefined),
+  };
 
   const processor = new ArtifactRunProcessor({
     agent: agent as any,
     artifacts: artifacts as any,
     renderer: stubRenderer as any,
     creditMeter: creditMeter as any,
+    featureGating: featureGating as any,
     runs: runs as any,
     redis: redis as any,
     logger,
@@ -93,7 +98,16 @@ const makeProcessor = () => {
 
   return {
     processor,
-    mocks: { logger, redis, agent, artifacts, runs, runHandle, creditMeter },
+    mocks: {
+      logger,
+      redis,
+      agent,
+      artifacts,
+      runs,
+      runHandle,
+      creditMeter,
+      featureGating,
+    },
   };
 };
 
@@ -138,6 +152,56 @@ describe('isTerminalJobFailure', () => {
 
 describe('ArtifactRunProcessor', () => {
   describe('process', () => {
+    it('should terminally reject a disallowed research job before Tavily can run', async () => {
+      mocks.featureGating.assertResearchAccess.mockRejectedValue(
+        new FeatureGateForbiddenException({
+          code: 'FEATURE_LIMIT_EXCEEDED',
+          feature: 'research',
+          limit: 0,
+          currentUsage: 0,
+          tier: { id: 'tier-1', name: 'Free' },
+          upgradeHint: 'Upgrade your plan to use AI research.',
+        }),
+      );
+      const job = makeJob({ data: buildInput({ withResearch: true }) });
+
+      await expect(processor.process(job)).rejects.toBeInstanceOf(
+        UnrecoverableError,
+      );
+
+      expect(mocks.agent.research).not.toHaveBeenCalled();
+      expect(mocks.agent.generate).not.toHaveBeenCalled();
+      expect(mocks.creditMeter.assertBalance).not.toHaveBeenCalled();
+    });
+
+    it('should preserve retryable entitlement failures instead of claiming research is disallowed', async () => {
+      const outage = new Error('database unavailable');
+      mocks.featureGating.assertResearchAccess.mockRejectedValue(outage);
+      const job = makeJob({ data: buildInput({ withResearch: true }) });
+
+      await expect(processor.process(job)).rejects.toBe(outage);
+
+      expect(mocks.agent.research).not.toHaveBeenCalled();
+    });
+
+    it('should allow a paid research job through the worker capability check', async () => {
+      mocks.agent.research.mockResolvedValue({ findings: 'Found', sources: [] });
+      const job = makeJob({ data: buildInput({ withResearch: true }) });
+
+      await processor.process(job);
+
+      expect(mocks.featureGating.assertResearchAccess).toHaveBeenCalledWith(
+        'user-1',
+      );
+      expect(mocks.agent.research).toHaveBeenCalledTimes(1);
+    });
+
+    it('should leave non-research worker behavior outside the capability gate', async () => {
+      await processor.process(makeJob());
+
+      expect(mocks.featureGating.assertResearchAccess).not.toHaveBeenCalled();
+    });
+
     it('should run a research-off POST job to a READY version', async () => {
       await processor.process(makeJob());
 

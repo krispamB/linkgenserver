@@ -123,6 +123,34 @@ export class FeatureGatingService {
     }
   }
 
+  async assertResearchAccess(userId: string): Promise<void> {
+    const tier = await this.resolveEntitlementTier(userId);
+    const configuredLimit = tier?.limits?.[FEATURE_KEYS.RESEARCH];
+    // Deployment-safe bridge for tier documents created before the explicit
+    // capability existed. Paid access is inferred from plan price, never from
+    // the shared credit balance; the next tier seed upsert persists 0/1.
+    const limit =
+      configuredLimit === undefined
+        ? tier.monthlyPrice > 0
+          ? 1
+          : 0
+        : this.getLimitFromTier(tier, FEATURE_KEYS.RESEARCH);
+
+    if (limit > 0 || limit === -1) return;
+
+    throw new FeatureGateForbiddenException({
+      code: FEATURE_GATE_ERROR_CODE,
+      feature: FEATURE_KEYS.RESEARCH,
+      limit,
+      currentUsage: 0,
+      tier: {
+        id: tier._id.toString(),
+        name: tier.name,
+      },
+      upgradeHint: 'Upgrade your plan to use AI research.',
+    });
+  }
+
   async hasScheduledPostUsage(
     userId: string,
     postId: string,

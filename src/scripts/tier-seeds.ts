@@ -25,6 +25,7 @@ export const TIER_SEEDS: TierSeed[] = [
     isActive: true,
     limits: {
       credits: 0,
+      research: 0,
       connected_accounts: 1,
       scheduled_posts: 1,
     },
@@ -42,11 +43,17 @@ export const TIER_SEEDS: TierSeed[] = [
     isActive: true,
     limits: {
       credits: 2000,
+      research: 1,
       connected_accounts: 1,
       scheduled_posts: 5,
     },
     metadata: {
-      features: ['1 connected account', '5 scheduled posts', '90 day history'],
+      features: [
+        'AI research',
+        '1 connected account',
+        '5 scheduled posts',
+        '90 day history',
+      ],
     },
   },
   {
@@ -59,11 +66,13 @@ export const TIER_SEEDS: TierSeed[] = [
     isActive: true,
     limits: {
       credits: 10000,
+      research: 1,
       connected_accounts: 1,
       scheduled_posts: 15,
     },
     metadata: {
       features: [
+        'AI research',
         '1 connected account',
         '15 scheduled posts',
         '1 year post history',
@@ -80,11 +89,13 @@ export const TIER_SEEDS: TierSeed[] = [
     isActive: true,
     limits: {
       credits: -1,
+      research: 1,
       connected_accounts: 5,
       scheduled_posts: -1,
     },
     metadata: {
       features: [
+        'AI research',
         '10 connected accounts',
         'unlimited scheduled posts',
         'unlimited post history',

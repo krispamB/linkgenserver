@@ -1,5 +1,6 @@
 export const FEATURE_KEYS = {
   CREDITS: 'credits',
+  RESEARCH: 'research',
   CONNECTED_ACCOUNTS: 'connected_accounts',
   SCHEDULED_POSTS: 'scheduled_posts',
 } as const;

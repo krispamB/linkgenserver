@@ -22,6 +22,7 @@ import { AgentRunnerService } from '../../agent/agent-runner.service';
 import { ArtifactService } from '../../artifact/artifact.service';
 import { CarouselRendererService } from '../../carousel';
 import { CreditMeterService } from '../../feature-gating/credit-meter.service';
+import { FeatureGatingService } from '../../feature-gating/feature-gating.service';
 import { RedisService } from '../../redis/redis.service';
 import { WorkflowRunService } from '../workflow-run.service';
 import { BuildInput } from '../engine/workflow.types';
@@ -49,6 +50,7 @@ async function bootstrapWorker() {
     artifacts: app.get(ArtifactService),
     renderer: app.get(CarouselRendererService),
     creditMeter: app.get(CreditMeterService),
+    featureGating: app.get(FeatureGatingService),
     runs: app.get(WorkflowRunService),
     redis: app.get(RedisService).getClient(),
     logger,

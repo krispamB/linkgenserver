@@ -3,6 +3,9 @@ import { Job, UnrecoverableError } from 'bullmq';
 import type { AgentRunner } from '../../agent/agent-runner.interface';
 import type { ArtifactWriter } from '../../artifact/artifact-writer.interface';
 import type { CreditMeterService } from '../../feature-gating/credit-meter.service';
+import type { FeatureGatingService } from '../../feature-gating/feature-gating.service';
+import { FeatureGateForbiddenException } from '../../feature-gating/feature-gating.exception';
+import { RunKind } from '../../database/schemas';
 import { RunCreditMeter } from '../engine/run-credit-meter';
 import {
   RunEventEmitter,
@@ -29,6 +32,7 @@ export interface ArtifactRunDeps {
   artifacts: ArtifactWriter;
   renderer: CarouselRenderer;
   creditMeter: CreditMeterService;
+  featureGating: FeatureGatingService;
   runs: RunRecordStore;
   redis: RunEventRedis;
   logger: Logger;
@@ -64,6 +68,17 @@ export class ArtifactRunProcessor {
   async process(job: Job<BuildInput>): Promise<void> {
     const runId = this.runIdOf(job);
     const { logger, redis, creditMeter, runs } = this.deps;
+
+    if (job.data.kind === RunKind.INITIAL && job.data.withResearch) {
+      try {
+        await this.deps.featureGating.assertResearchAccess(job.data.userId);
+      } catch (error: unknown) {
+        if (error instanceof FeatureGateForbiddenException) {
+          throw new UnrecoverableError('research is not available on this plan');
+        }
+        throw error;
+      }
+    }
 
     const emitter = new RunEventEmitter(redis, runId, logger);
     this.emitters.set(runId, emitter);

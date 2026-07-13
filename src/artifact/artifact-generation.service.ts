@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { RunKind } from 'src/database/schemas';
 import { CreditMeterService } from 'src/feature-gating/credit-meter.service';
+import { FeatureGatingService } from 'src/feature-gating/feature-gating.service';
 import { WorkflowRunService } from 'src/workflow/workflow-run.service';
 import { WorkflowQueue } from 'src/workflow/workflow.queue';
 import type { BuildInput } from 'src/workflow/engine/workflow.types';
@@ -28,6 +29,7 @@ export class ArtifactGenerationService {
     private readonly artifactService: ArtifactService,
     private readonly workflowRunService: WorkflowRunService,
     private readonly creditMeter: CreditMeterService,
+    private readonly featureGating: FeatureGatingService,
     private readonly workflowQueue: WorkflowQueue,
   ) {}
 
@@ -35,6 +37,10 @@ export class ArtifactGenerationService {
     userId: string,
     input: CreateArtifactInput,
   ): Promise<LaunchResult> {
+    if (input.withResearch) {
+      await this.featureGating.assertResearchAccess(userId);
+    }
+
     // Pre-check the headroom so an out-of-credits user gets a fast 403 rather
     // than a queued run that fails after doing work.
     await this.creditMeter.assertBalance(userId);
