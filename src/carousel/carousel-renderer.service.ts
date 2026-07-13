@@ -7,7 +7,11 @@ import type {
 } from '../workflow/engine/workflow.types';
 import { uploadFile } from '../s3';
 import { CarouselTemplatesService } from './carousel-templates.service';
-import { CarouselAssemblyError } from './carousel-renderer.error';
+import {
+  CarouselAssemblyError,
+  RenderAttemptError,
+} from './carousel-renderer.error';
+import type { BrowserlessUsage } from './render-usage.types';
 import { Slide } from './schemas';
 import { htmlToPdf } from './utils/html-to-pdf.util';
 
@@ -43,24 +47,42 @@ export class CarouselRendererService implements CarouselRenderer {
   async render(input: CarouselRenderInput): Promise<VersionRender> {
     const html = this.assembleHtml(input.templateId, input.slides);
     const browserlessStartedAt = Date.now();
-    const pdf = await this.htmlToPdf(html);
-    const browserlessDurationMs = Math.max(
-      0,
-      Date.now() - browserlessStartedAt,
-    );
-    const browserlessUnits = browserlessUnitsForDuration(
-      browserlessDurationMs,
-    );
+    let pdf: Buffer;
+    try {
+      pdf = await this.htmlToPdf(html);
+    } catch (error: unknown) {
+      const browserless = this.browserlessUsageSince(browserlessStartedAt);
+      throw new RenderAttemptError(
+        error instanceof Error ? error.message : String(error),
+        browserless,
+        'browserless',
+        error,
+      );
+    }
+    const browserless = this.browserlessUsageSince(browserlessStartedAt);
     const pdfKey = documentPdfKey(input.artifactId, input.version);
-    await this.uploadFile(pdfKey, pdf, PDF_MIME_TYPE);
+    try {
+      await this.uploadFile(pdfKey, pdf, PDF_MIME_TYPE);
+    } catch (error: unknown) {
+      throw new RenderAttemptError(
+        error instanceof Error ? error.message : String(error),
+        browserless,
+        'upload',
+        error,
+      );
+    }
     // The page box matches the slide box exactly, so `pageCount = slides.length`
     // is true by construction — no need to count pages in the returned PDF.
     return {
       pdfKey,
       pageCount: input.slides.length,
-      browserlessDurationMs,
-      browserlessUnits,
+      browserless,
     };
+  }
+
+  private browserlessUsageSince(startedAt: number): BrowserlessUsage {
+    const durationMs = Math.max(0, Date.now() - startedAt);
+    return { durationMs, units: browserlessUnitsForDuration(durationMs) };
   }
 
   /**

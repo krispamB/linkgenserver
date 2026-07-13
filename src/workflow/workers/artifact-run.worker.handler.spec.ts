@@ -71,7 +71,7 @@ const makeProcessor = () => {
     runId: 'run-1',
     setCurrentStep: jest.fn().mockResolvedValue(undefined),
     saveResearchContext: jest.fn().mockResolvedValue(undefined),
-    saveRenderUsage: jest.fn().mockResolvedValue(undefined),
+    recordRenderAttempt: jest.fn().mockResolvedValue(undefined),
     getLatestCompletedResearch: jest.fn(),
     complete: jest.fn().mockResolvedValue(undefined),
     fail: jest.fn().mockResolvedValue(undefined),
@@ -306,8 +306,7 @@ describe('ArtifactRunProcessor', () => {
       stubRenderer.render.mockResolvedValue({
         pdfKey: 'artifacts/artifact-1/2/document.pdf',
         pageCount: 2,
-        browserlessDurationMs: 30_001,
-        browserlessUnits: 2,
+        browserless: { durationMs: 30_001, units: 2 },
       });
       const job = makeJob({
         data: buildInput({
@@ -344,14 +343,45 @@ describe('ArtifactRunProcessor', () => {
         {
           pdfKey: 'artifacts/artifact-1/2/document.pdf',
           pageCount: 2,
-          browserlessDurationMs: 30_001,
-          browserlessUnits: 2,
+          browserless: { durationMs: 30_001, units: 2 },
         },
       );
-      expect(mocks.runHandle.saveRenderUsage).toHaveBeenCalledWith({
+      expect(mocks.runHandle.recordRenderAttempt).toHaveBeenCalledWith({
         durationMs: 30_001,
         units: 2,
+        outcome: 'SUCCEEDED',
       });
+    });
+
+    it('should retain render telemetry but never settle credits when later workflow persistence fails', async () => {
+      mocks.agent.generate.mockResolvedValue({
+        document: {
+          templateId: 'minimal',
+          slides: [{ type: 'cover', fields: { title: 'A document' } }],
+        },
+      });
+      stubRenderer.render.mockResolvedValue({
+        pdfKey: 'artifacts/artifact-1/1/document.pdf',
+        pageCount: 1,
+        browserless: { durationMs: 12_000, units: 1 },
+      });
+      mocks.artifacts.setVersionContent.mockRejectedValue(
+        new Error('mongo unavailable'),
+      );
+
+      await expect(
+        processor.process(
+          makeJob({ data: buildInput({ type: 'DOCUMENT' }) }),
+        ),
+      ).rejects.toThrow('mongo unavailable');
+
+      expect(mocks.runHandle.recordRenderAttempt).toHaveBeenCalledWith({
+        durationMs: 12_000,
+        units: 1,
+        outcome: 'SUCCEEDED',
+      });
+      expect(mocks.creditMeter.debit).not.toHaveBeenCalled();
+      expect(mocks.runHandle.complete).not.toHaveBeenCalled();
     });
 
     it('should meter the LLM turn and commit the credits once', async () => {

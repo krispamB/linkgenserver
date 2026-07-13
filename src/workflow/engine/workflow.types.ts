@@ -8,7 +8,6 @@ import type { ArtifactContent } from '../../artifact/schemas';
 import type {
   ArtifactWriter,
   RefineContext,
-  RenderUsage,
   VersionRender,
 } from '../../artifact/artifact-writer.interface';
 import type {
@@ -17,6 +16,7 @@ import type {
 } from '../../agent/agent-runner.interface';
 import type { StylePreset } from '../../agent/style-presets.config';
 import type { UsageRecord } from '../../feature-gating/credit-meter.constants';
+import type { RenderAttemptUsage } from '../../carousel/render-usage.types';
 import { WorkflowStep } from '../workflow.constants';
 import type { EmittedEvent } from './run-event.types';
 
@@ -102,7 +102,7 @@ export interface RunRecordHandle {
   readonly runId: string;
   setCurrentStep(step: WorkflowStep): Promise<void>;
   saveResearchContext(research: ResearchResult): Promise<void>;
-  saveRenderUsage(usage: RenderUsage): Promise<void>;
+  recordRenderAttempt(usage: RenderAttemptUsage): Promise<void>;
   getLatestCompletedResearch(
     artifactId: string,
   ): Promise<ResearchResult | undefined>;

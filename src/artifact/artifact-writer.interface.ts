@@ -1,18 +1,13 @@
 import { ArtifactType } from 'src/database/schemas';
 import { ArtifactContent } from './schemas';
+import type { BrowserlessUsage } from '../carousel/render-usage.types';
 
 // RENDER_PDF's output for DOCUMENT artifacts, folded into content.document
 // by setVersionContent.
 export interface VersionRender {
   pdfKey: string;
   pageCount: number;
-  browserlessDurationMs: number;
-  browserlessUnits: number;
-}
-
-export interface RenderUsage {
-  durationMs: number;
-  units: number;
+  browserless: BrowserlessUsage;
 }
 
 export interface CurrentVersionRead {

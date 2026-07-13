@@ -96,21 +96,22 @@ This is a coarse safety net (one flat rate, not per-model). For OpenRouter v1 (#
 `cost` is always present, so the fallback should effectively never fire; it exists so a
 future provider without cost reporting can't slip through free. Log a warning when it does.
 
-## 3. Fixed surcharges for non-LLM actions
+## 3. Provider-unit pricing for non-LLM actions
 
 Web search (Tavily) and PDF render (Browserless) cost the operator real money but emit no
-`usage.cost`. Each carries a **flat credit surcharge**, priced in the same credit unit so
-it is commensurable with LLM credits (i.e. set each ≈ the action's real cost × peg × markup):
+`usage.cost`. They are priced in the same credit unit from their provider billing units:
 
-| Signal `kind`  | Fired by (#104/#103)                    | Env constant                    | Illustrative |
-|----------------|------------------------------------------|----------------------------------|--------------|
-| `web_search`   | research agent, per Tavily call (#104 §7) | `CREDIT_SURCHARGE_WEB_SEARCH`   | `8`          |
-| `pdf_render`   | RENDER_PDF step, per Browserless render (#103 §4) | `CREDIT_SURCHARGE_PDF_RENDER` | `5` |
+| Signal `kind` | Fired by | Env configuration | Launch policy |
+|---|---|---|---|
+| `web_search` | research agent, per successful advanced Tavily lookup | `CREDIT_SURCHARGE_WEB_SEARCH` | 32 credits |
+| `pdf_render` | RENDER_PDF step, per measured Browserless 30-second unit | `CREDIT_SURCHARGE_PDF_RENDER`, `CREDIT_MINIMUM_PDF_RENDER` | `max(8, 4 × units)` |
 
 Surcharge signals carry `amount` as a **count**, not dollars:
 
 ```
-credits = amount * CREDIT_SURCHARGE_<KIND>
+web search credits = successful lookups * CREDIT_SURCHARGE_WEB_SEARCH
+pdf render credits = max(CREDIT_MINIMUM_PDF_RENDER,
+                         measured units * CREDIT_SURCHARGE_PDF_RENDER)
 ```
 
 `UsageKind` is defined here (the enum #103 §9 references):
@@ -209,14 +210,15 @@ now credits). **Period resolution is reused verbatim** — subscription
 `currentPeriodStart` or UTC-month start (`resolveUsagePeriod`). Credits reset each period;
 **no rollover** in v1.
 
-**No new `MarkRun`-style ledger collection.** The per-run credit breakdown already lives on
-the `WorkflowRun` (#103's `creditsUsed` + the recorded ticks); the period total lives on
-`Usage`. That covers dashboard, SSE, and audit without a third store. The `MarkRun`
-collection is deleted with the rest of `src/mark`.
+**No new `MarkRun`-style ledger collection.** The per-run credit breakdown lives on the
+`WorkflowRun`: `creditsUsed`, live usage ticks, and an append-only `renderAttempts` list
+containing Browserless duration, units, outcome, and failure stage. Failed attempts remain
+auditable but are excluded from the credit accumulator. The period total lives on `Usage`.
+That covers dashboard, SSE, and provider-cost audit without a third store.
 
 **Config (new global env, `.env.example`):** `CREDITS_PER_USD`, `CREDIT_MARKUP`,
 `FALLBACK_CREDITS_PER_1K_TOKENS`, `CREDIT_SURCHARGE_WEB_SEARCH`,
-`CREDIT_SURCHARGE_PDF_RENDER`. Retire all `MARK_*`.
+`CREDIT_SURCHARGE_PDF_RENDER`, `CREDIT_MINIMUM_PDF_RENDER`. Retire all `MARK_*`.
 
 ## 6. Enforcement points
 
@@ -341,8 +343,8 @@ successful runs**.
 - **Delete** `src/mark` entirely, including the `MarkRun` collection and all `MARK_*` config
   (charter #9); the Tavily helper's surcharge signal is now `web_search` via #104's tool.
 - **Config:** add `CREDITS_PER_USD`, `CREDIT_MARKUP`, `FALLBACK_CREDITS_PER_1K_TOKENS`,
-  `CREDIT_SURCHARGE_WEB_SEARCH`, `CREDIT_SURCHARGE_PDF_RENDER` to `.env.example`; remove all
-  `MARK_*`.
+  `CREDIT_SURCHARGE_WEB_SEARCH`, `CREDIT_SURCHARGE_PDF_RENDER`, and
+  `CREDIT_MINIMUM_PDF_RENDER` to `.env.example`; remove all `MARK_*`.
 - **Tests** (AGENTS.md): `credit-meter.service.spec.ts` (conversion per kind incl. fallback
   and rounding; surcharge math) and updated `feature-gating.service.spec.ts` (headroom
   guard, `credits` debit, dashboard shape, `-1`/`0` edge cases), manual construction +

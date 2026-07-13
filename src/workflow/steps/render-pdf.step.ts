@@ -1,6 +1,9 @@
 import type { CarouselTheme } from '../../database/schemas';
 import type { Slide } from '../../carousel/schemas';
-import { CarouselAssemblyError } from '../../carousel/carousel-renderer.error';
+import {
+  CarouselAssemblyError,
+  RenderAttemptError,
+} from '../../carousel/carousel-renderer.error';
 import { USAGE_KINDS } from '../../feature-gating/credit-meter.constants';
 import { terminal } from '../engine/workflow.error';
 import type { StepHandler } from '../engine/workflow.types';
@@ -51,20 +54,27 @@ export const renderPdfStep: StepHandler = async (state, ctx) => {
       templateId: document.templateId,
       slides: document.slides,
     });
-    await ctx.run.saveRenderUsage({
-      durationMs: render.browserlessDurationMs,
-      units: render.browserlessUnits,
+    await ctx.run.recordRenderAttempt({
+      ...render.browserless,
+      outcome: 'SUCCEEDED',
     });
     ctx.meter.record({
       kind: USAGE_KINDS.PDF_RENDER,
-      amount: render.browserlessUnits,
+      amount: render.browserless.units,
       detail: {
-        browserlessDurationMs: render.browserlessDurationMs,
-        browserlessUnits: render.browserlessUnits,
+        browserless: render.browserless,
       },
     });
     return { render };
   } catch (error: unknown) {
+    if (error instanceof RenderAttemptError) {
+      await ctx.run.recordRenderAttempt({
+        ...error.browserless,
+        outcome: 'FAILED',
+        failureStage: error.failureStage,
+      });
+      throw error;
+    }
     if (error instanceof CarouselAssemblyError) {
       throw terminal(error.message, error);
     }

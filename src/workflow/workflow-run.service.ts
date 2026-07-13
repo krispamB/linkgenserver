@@ -3,7 +3,7 @@ import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types, isValidObjectId } from 'mongoose';
 import { RunKind, RunStatus, WorkflowRun } from '../database/schemas';
 import type { ResearchResult } from '../agent/agent-runner.interface';
-import type { RenderUsage } from '../artifact/artifact-writer.interface';
+import type { RenderAttemptUsage } from '../carousel/render-usage.types';
 import type { BuildInput, RunRecordHandle } from './engine/workflow.types';
 import { WorkflowStep } from './workflow.constants';
 
@@ -71,8 +71,8 @@ export class WorkflowRunService {
         this.patch(runId, { currentStep: step }),
       saveResearchContext: (research: ResearchResult) =>
         this.patch(runId, { researchContext: research }),
-      saveRenderUsage: (usage: RenderUsage) =>
-        this.patch(runId, { renderUsage: usage }),
+      recordRenderAttempt: (usage: RenderAttemptUsage) =>
+        this.appendRenderAttempt(runId, usage),
       getLatestCompletedResearch: (artifactId: string) =>
         this.getLatestCompletedResearch(artifactId),
       complete: (creditsUsed: number) =>
@@ -89,6 +89,16 @@ export class WorkflowRunService {
     await this.workflowRunModel.updateOne(
       { _id: new Types.ObjectId(runId) },
       { $set: fields },
+    );
+  }
+
+  private async appendRenderAttempt(
+    runId: string,
+    usage: RenderAttemptUsage,
+  ): Promise<void> {
+    await this.workflowRunModel.updateOne(
+      { _id: new Types.ObjectId(runId) },
+      { $push: { renderAttempts: usage } },
     );
   }
 }

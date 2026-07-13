@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { CarouselRenderInput } from '../workflow/engine/workflow.types';
 import { CarouselAssemblyError } from './carousel-renderer.error';
+import { RenderAttemptError } from './carousel-renderer.error';
 import {
   browserlessUnitsForDuration,
   CarouselRendererService,
@@ -59,6 +60,7 @@ const makeService = () => {
 
 describe('CarouselRendererService', () => {
   beforeEach(() => jest.clearAllMocks());
+  afterEach(() => jest.useRealTimers());
 
   describe('assembleHtml', () => {
     it('should emit exactly one slide section per slide when given a real fixture deck', () => {
@@ -113,8 +115,7 @@ describe('CarouselRendererService', () => {
       expect(result).toEqual({
         pdfKey: 'artifacts/artifact-1/2/document.pdf',
         pageCount: slides.length,
-        browserlessDurationMs: expect.any(Number),
-        browserlessUnits: 1,
+        browserless: { durationMs: expect.any(Number), units: 1 },
       });
       // R1: the returned render carries the key, never the private-bucket url.
       expect(result.pdfKey).not.toMatch(/^https?:\/\//);
@@ -164,11 +165,15 @@ describe('CarouselRendererService', () => {
         .catch((e: unknown) => e);
 
       // Not a CarouselAssemblyError — the step must treat it as retryable.
-      expect(error).toBeInstanceOf(Error);
+      expect(error).toBeInstanceOf(RenderAttemptError);
       expect(error).not.toBeInstanceOf(CarouselAssemblyError);
       expect((error as Error).message).toContain(
         'Browserless PDF generation failed',
       );
+      expect(error).toMatchObject({
+        browserless: { durationMs: expect.any(Number), units: 1 },
+        failureStage: 'browserless',
+      });
     });
 
     it('should record Browserless duration and rounded 30-second units', async () => {
@@ -184,10 +189,30 @@ describe('CarouselRendererService', () => {
       const result = await service.render(makeInput(loadFixture('minimal')));
 
       expect(result).toMatchObject({
-        browserlessDurationMs: 60_001,
-        browserlessUnits: 3,
+        browserless: { durationMs: 60_001, units: 3 },
       });
-      jest.useRealTimers();
+    });
+
+    it('should retain measured Browserless usage when upload fails afterward', async () => {
+      jest.useFakeTimers().setSystemTime(
+        new Date('2026-07-13T00:00:00.000Z'),
+      );
+      const { service, spies, pdf } = makeService();
+      spies.htmlToPdf.mockImplementation(async () => {
+        jest.setSystemTime(new Date('2026-07-13T00:00:30.001Z'));
+        return pdf;
+      });
+      spies.uploadFile.mockRejectedValue(new Error('R2 unavailable'));
+
+      const error = await service
+        .render(makeInput(loadFixture('minimal')))
+        .catch((caught: unknown) => caught);
+
+      expect(error).toBeInstanceOf(RenderAttemptError);
+      expect(error).toMatchObject({
+        browserless: { durationMs: 30_001, units: 2 },
+        failureStage: 'upload',
+      });
     });
   });
 

@@ -1,4 +1,5 @@
 import { CarouselAssemblyError } from '../../carousel/carousel-renderer.error';
+import { RenderAttemptError } from '../../carousel/carousel-renderer.error';
 import { USAGE_KINDS } from '../../feature-gating/credit-meter.constants';
 import { WorkflowError } from '../engine/workflow.error';
 import type { RunState, StepContext } from '../engine/workflow.types';
@@ -25,19 +26,18 @@ const makeCtx = () => {
   const render = jest.fn().mockResolvedValue({
     pdfKey: 'artifacts/artifact-1/2/document.pdf',
     pageCount: 2,
-    browserlessDurationMs: 44_000,
-    browserlessUnits: 2,
+    browserless: { durationMs: 44_000, units: 2 },
   });
   const record = jest.fn();
-  const saveRenderUsage = jest.fn().mockResolvedValue(undefined);
+  const recordRenderAttempt = jest.fn().mockResolvedValue(undefined);
   const emit = jest.fn();
   const ctx = {
     renderer: { render },
     meter: { record },
-    run: { saveRenderUsage },
+    run: { recordRenderAttempt },
     emit,
   } as unknown as StepContext;
-  return { ctx, render, record, saveRenderUsage, emit };
+  return { ctx, render, record, recordRenderAttempt, emit };
 };
 
 describe('renderPdfStep', () => {
@@ -56,14 +56,13 @@ describe('renderPdfStep', () => {
       render: {
         pdfKey: 'artifacts/artifact-1/2/document.pdf',
         pageCount: 2,
-        browserlessDurationMs: 44_000,
-        browserlessUnits: 2,
+        browserless: { durationMs: 44_000, units: 2 },
       },
     });
   });
 
   it('should meter measured Browserless units and persist auditable render usage on success', async () => {
-    const { ctx, record, saveRenderUsage } = makeCtx();
+    const { ctx, record, recordRenderAttempt } = makeCtx();
 
     await renderPdfStep(makeState(), ctx);
 
@@ -71,11 +70,12 @@ describe('renderPdfStep', () => {
     expect(record).toHaveBeenCalledWith({
       kind: USAGE_KINDS.PDF_RENDER,
       amount: 2,
-      detail: { browserlessDurationMs: 44_000, browserlessUnits: 2 },
+      detail: { browserless: { durationMs: 44_000, units: 2 } },
     });
-    expect(saveRenderUsage).toHaveBeenCalledWith({
+    expect(recordRenderAttempt).toHaveBeenCalledWith({
       durationMs: 44_000,
       units: 2,
+      outcome: 'SUCCEEDED',
     });
   });
 
@@ -115,12 +115,22 @@ describe('renderPdfStep', () => {
   });
 
   it('should let a Browserless failure propagate unwrapped so it rides the retry budget', async () => {
-    const { ctx, render, record } = makeCtx();
-    const browserless = new Error('Browserless PDF generation failed: 504');
+    const { ctx, render, record, recordRenderAttempt } = makeCtx();
+    const browserless = new RenderAttemptError(
+      'Browserless PDF generation failed: 504',
+      { durationMs: 30_001, units: 2 },
+      'browserless',
+    );
     render.mockRejectedValue(browserless);
 
     await expect(renderPdfStep(makeState(), ctx)).rejects.toBe(browserless);
     // Not classified terminal here — the engine's default rides the attempt budget.
     expect(record).not.toHaveBeenCalled();
+    expect(recordRenderAttempt).toHaveBeenCalledWith({
+      durationMs: 30_001,
+      units: 2,
+      outcome: 'FAILED',
+      failureStage: 'browserless',
+    });
   });
 });

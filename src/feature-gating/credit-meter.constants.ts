@@ -22,8 +22,7 @@ export interface UsageDetail {
   // provider reports no cost.
   totalTokens?: number;
   model?: string;
-  browserlessDurationMs?: number;
-  browserlessUnits?: number;
+  browserless?: { durationMs: number; units: number };
 }
 
 export const CREDIT_CONFIG_DEFAULTS = {

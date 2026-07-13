@@ -162,15 +162,26 @@ describe('WorkflowRunService', () => {
       );
     });
 
-    it('should persist auditable Browserless render usage on the run', async () => {
-      await service.handleFor(fixtures.runId).saveRenderUsage({
+    it('should append auditable Browserless attempts without overwriting retries', async () => {
+      await service.handleFor(fixtures.runId).recordRenderAttempt({
         durationMs: 60_001,
         units: 3,
+        outcome: 'FAILED',
+        failureStage: 'upload',
       });
 
       expect(mocks.workflowRunModel.updateOne).toHaveBeenCalledWith(
         { _id: expect.any(Types.ObjectId) },
-        { $set: { renderUsage: { durationMs: 60_001, units: 3 } } },
+        {
+          $push: {
+            renderAttempts: {
+              durationMs: 60_001,
+              units: 3,
+              outcome: 'FAILED',
+              failureStage: 'upload',
+            },
+          },
+        },
       );
     });
 

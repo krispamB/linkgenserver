@@ -187,8 +187,9 @@ vendor exposure.
    buffer; monitor retry rates.
 4. **Provider-cost source of truth:** keep LLM charges based on OpenRouter's
    reported `usage.cost`, not a fixed token estimate.
-5. **Browserless telemetry:** record session duration and actual units so the
-   fixed 8-credit render charge can later move to `max(8, 4 × measured_units)`.
+5. **Browserless telemetry:** append duration, actual units, outcome, and failure
+   stage for every render attempt. Charge only the winning workflow using
+   `max(8, 4 × measured_units)`; retain failed-attempt telemetry for cost audit.
 6. **No unlimited tier:** every paid plan needs a finite allowance or explicit
    paid top-up/overage policy.
 7. **Review after real usage:** after the first 100–200 paid users or one full

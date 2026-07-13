@@ -1,3 +1,8 @@
+import type {
+  BrowserlessUsage,
+  RenderFailureStage,
+} from './render-usage.types';
+
 /**
  * Raised when deck assembly fails — an unknown `templateId` or a `slide.type`
  * with no registered template. Both are impossible in practice: `GENERATE`
@@ -12,5 +17,22 @@ export class CarouselAssemblyError extends Error {
   constructor(message: string, cause?: unknown) {
     super(message, { cause });
     this.name = 'CarouselAssemblyError';
+  }
+}
+
+/**
+ * A transient render-pipeline failure that still carries the Browserless time
+ * already consumed. The workflow records this attempt for provider-cost audit
+ * but never sends it to the user credit meter.
+ */
+export class RenderAttemptError extends Error {
+  constructor(
+    message: string,
+    readonly browserless: BrowserlessUsage,
+    readonly failureStage: RenderFailureStage,
+    cause?: unknown,
+  ) {
+    super(message, { cause });
+    this.name = 'RenderAttemptError';
   }
 }
