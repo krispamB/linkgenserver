@@ -383,7 +383,7 @@ describe('FeatureGatingService', () => {
   });
 
   describe('getDashboardUsage', () => {
-    it('should return a distinct zero credit limit when AI is unavailable on the plan', async () => {
+    it('should return the shared Free credit allowance and remaining headroom', async () => {
       const { service, mocks } = makeService();
       const userId = new Types.ObjectId().toString();
       const defaultTierId = new Types.ObjectId();
@@ -398,7 +398,7 @@ describe('FeatureGatingService', () => {
           _id: defaultTierId,
           name: 'Free',
           limits: {
-            credits: 0,
+            credits: 120,
             connected_accounts: 1,
             scheduled_posts: 1,
           },
@@ -407,16 +407,18 @@ describe('FeatureGatingService', () => {
       mocks.connectedAccountModel.countDocuments.mockResolvedValue(0);
       mocks.usageModel.find.mockReturnValue({
         select: jest.fn().mockReturnValue({
-          lean: jest.fn().mockResolvedValue([]),
+          lean: jest
+            .fn()
+            .mockResolvedValue([{ feature: 'credits', count: 30 }]),
         }),
       });
 
       const result = await service.getDashboardUsage(userId);
 
       expect(result.usage.credits).toEqual({
-        used: 0,
-        limit: 0,
-        remaining: 0,
+        used: 30,
+        limit: 120,
+        remaining: 90,
       });
     });
   });

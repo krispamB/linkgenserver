@@ -46,7 +46,7 @@ enforcement points, and the Paddle/tier-config implications**. The engine's hook
 1 credit = $0.001 of raw provider cost      →  CREDITS_PER_USD = 1000
 ```
 
-`CREDITS_PER_USD` and a margin multiplier `CREDIT_MARKUP` (default `1.0`) are global env
+`CREDITS_PER_USD` and a margin multiplier `CREDIT_MARKUP` (launch default `2.0`) are global env
 (`ConfigService`, code defaults, added to `.env.example`) — never per-tier. Per-tier
 config carries **only the allowance** (§5).
 
@@ -199,9 +199,9 @@ export const FEATURE_KEYS = {
 type Feature = 'credits' | 'connected_accounts' | 'scheduled_posts';
 ```
 
-`limits.credits` is the per-period allowance: a positive integer, `-1` = unlimited
-(short-circuits the guard, as the current `assertScheduledPostQuota`/`assertMarkTokenQuota`
-already do), `0` = **AI disabled on this plan** (every run blocked — the free/no-AI tier).
+`limits.credits` is the per-period allowance. Launch tiers all use positive, finite
+allowances; the generic gate continues to understand `-1` for non-provider-backed legacy
+features and `0` for a disabled feature.
 
 **`Usage`** — schema unchanged. Consumption is recorded exactly as today, keyed
 `(user_id, 'credits', periodStart)`, with the same unique index and the same `$inc` upsert
@@ -281,15 +281,16 @@ unlimited) alongside `connected_accounts` and `scheduled_posts`; the `ai_drafts`
 ## 8. Paddle / tier-config implications
 
 - **Each plan's Paddle price maps to a tier, and each tier carries `limits.credits`** —
-  the credit allowance is set in tier config next to the existing limits (operator-tuned,
-  seeded from: target model cost per average run × expected runs/mo × `CREDIT_MARKUP`).
-  Illustrative ladder — free `0` (no AI) or a small trial grant, Starter `2000`, Pro
-  `10000`, top tier `-1` (unlimited).
-- **Sizing anchor (illustrative, at `CREDITS_PER_USD = 1000`, markup `1.0`):** an
-  insight post ≈ research (~$0.02) + generation (~$0.01) + 1 web search (`8`) ≈ **~38
-  credits**; a quick post (no research) ≈ **~12 credits**; a carousel adds a `pdf_render`
-  (`5`). So "2,000 credits" ≈ 50 insight posts or ~160 quick posts — the operator sizes
-  the ladder against these.
+  the launch ladder is Free `120`, Starter `2,000`, Creator `10,000`, and Pro Writer
+  `30,000`. All provider-backed allowances are finite. Free credits are shared across
+  posts, polls, and documents and do not enable research.
+- **Sizing anchor (at `CREDITS_PER_USD = 1000`, markup `2.0`):** LLM usage costs
+  `ceil(provider cost in USD × 1000 × 2)`. Successful advanced Tavily lookups cost 32
+  credits each, while successful Browserless renders cost `max(8, 4 × measured units)`.
+  The plan ladder is therefore evaluated against the actual mix of artifact, search, and
+  render usage rather than a fixed draft count.
+- **Rollout:** re-run `npm run seed:tiers:temp` in each environment to upsert the launch
+  allowances and plan metadata onto existing tier documents.
 - **Upgrades take effect immediately.** The allowance is read live from the resolved tier
   at guard time while the `Usage` aggregate persists, so a mid-period upgrade instantly
   raises headroom without touching usage rows (existing `resolveEntitlementTier` behavior).

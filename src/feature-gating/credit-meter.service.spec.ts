@@ -21,7 +21,7 @@ import { CreditMeterService } from './credit-meter.service';
 describe('CreditMeterService', () => {
   const envValues: Record<string, unknown> = {
     CREDITS_PER_USD: 1000,
-    CREDIT_MARKUP: 1.0,
+    CREDIT_MARKUP: 2.0,
     FALLBACK_CREDITS_PER_1K_TOKENS: 10,
     CREDIT_SURCHARGE_WEB_SEARCH: 32,
     CREDIT_SURCHARGE_PDF_RENDER: 4,
@@ -65,16 +65,16 @@ describe('CreditMeterService', () => {
 
   describe('toCredits', () => {
     it('should price an llm call from provider cost when cost is present', () => {
-      // $0.0234 * 1000 credits/USD * 1.0 markup = 23.4 -> 24
-      expect(service.toCredits({ kind: 'llm', amount: 0.0234 })).toBe(24);
+      // $0.0234 * 1000 credits/USD * 2.0 markup = 46.8 -> 47
+      expect(service.toCredits({ kind: 'llm', amount: 0.0234 })).toBe(47);
     });
 
     it('should round llm credits up to the next whole credit', () => {
-      expect(service.toCredits({ kind: 'llm', amount: 0.0011 })).toBe(2);
+      expect(service.toCredits({ kind: 'llm', amount: 0.0011 })).toBe(3);
     });
 
     it('should return an exact integer when cost lands on a credit boundary', () => {
-      expect(service.toCredits({ kind: 'llm', amount: 0.05 })).toBe(50);
+      expect(service.toCredits({ kind: 'llm', amount: 0.05 })).toBe(100);
     });
 
     it('should apply the markup multiplier to llm cost', () => {
@@ -87,7 +87,7 @@ describe('CreditMeterService', () => {
     it('should honour a non-default credit peg', () => {
       const { service: pegged } = makeService({ CREDITS_PER_USD: 100 });
 
-      expect(pegged.toCredits({ kind: 'llm', amount: 0.05 })).toBe(5);
+      expect(pegged.toCredits({ kind: 'llm', amount: 0.05 })).toBe(10);
     });
 
     it('should fall back to token pricing when cost is zero', () => {
@@ -184,7 +184,7 @@ describe('CreditMeterService', () => {
         CREDIT_SURCHARGE_WEB_SEARCH: undefined,
       });
 
-      expect(bare.toCredits({ kind: 'llm', amount: 0.01 })).toBe(10);
+      expect(bare.toCredits({ kind: 'llm', amount: 0.01 })).toBe(20);
       expect(bare.toCredits({ kind: 'web_search', amount: 1 })).toBe(32);
     });
   });

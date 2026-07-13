@@ -29,7 +29,7 @@ export interface UsageDetail {
 
 export const CREDIT_CONFIG_DEFAULTS = {
   CREDITS_PER_USD: 1000,
-  CREDIT_MARKUP: 1.0,
+  CREDIT_MARKUP: 2.0,
   // Safety net only: sized above a frontier model's blended per-1k rate so a
   // provider that reports no cost cannot be cheaper than one that does.
   FALLBACK_CREDITS_PER_1K_TOKENS: 10,
