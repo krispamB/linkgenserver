@@ -30,6 +30,6 @@ export const CREDIT_CONFIG_DEFAULTS = {
   // Safety net only: sized above a frontier model's blended per-1k rate so a
   // provider that reports no cost cannot be cheaper than one that does.
   FALLBACK_CREDITS_PER_1K_TOKENS: 10,
-  CREDIT_SURCHARGE_WEB_SEARCH: 8,
+  CREDIT_SURCHARGE_WEB_SEARCH: 32,
   CREDIT_SURCHARGE_PDF_RENDER: 5,
 } as const;

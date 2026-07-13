@@ -21,6 +21,7 @@ export interface AgentRunConfig {
   messages: LLMMessage[];
   tools: Tool[];
   maxSteps: number;
+  maxSuccessfulToolCalls?: number;
   model?: string;
 }
 

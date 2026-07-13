@@ -38,6 +38,7 @@ import {
 } from './tools';
 
 const DEFAULT_RESEARCH_MAX_STEPS = 5;
+const MAX_SUCCESSFUL_RESEARCH_LOOKUPS = 5;
 
 const describeError = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);
@@ -127,6 +128,7 @@ export class AgentRunnerService implements AgentRunner {
         ],
         tools: [this.searchWebTool],
         maxSteps: this.researchMaxSteps,
+        maxSuccessfulToolCalls: MAX_SUCCESSFUL_RESEARCH_LOOKUPS,
         model: this.researchModel,
       },
       hooks,
@@ -155,7 +157,14 @@ export class AgentRunnerService implements AgentRunner {
     config: AgentRunConfig,
     hooks?: AgentHooks,
   ): Promise<AgentRunResult> {
-    const { system, messages, tools, maxSteps, model } = config;
+    const {
+      system,
+      messages,
+      tools,
+      maxSteps,
+      maxSuccessfulToolCalls,
+      model,
+    } = config;
     // A label for the usage tag; the request itself passes `model` through as-is,
     // letting the strategy fall back to its default when it is undefined.
     const usageModel = model ?? 'default';
@@ -167,6 +176,7 @@ export class AgentRunnerService implements AgentRunner {
     ];
     const steps: AgentStep[] = [];
     const usage = emptyUsage();
+    let successfulToolCalls = 0;
 
     for (let step = 0; step < maxSteps; step++) {
       const turn = await this.llmService.completeWithTools(
@@ -188,9 +198,32 @@ export class AgentRunnerService implements AgentRunner {
         toolCalls: turn.toolCalls,
       });
 
-      const toolResults = await Promise.all(
-        turn.toolCalls.map((call) => this.executeTool(tools, call, hooks)),
-      );
+      const toolResults: unknown[] = [];
+      if (maxSuccessfulToolCalls === undefined) {
+        toolResults.push(
+          ...(await Promise.all(
+            turn.toolCalls.map((call) =>
+              this.executeTool(tools, call, hooks),
+            ),
+          )),
+        );
+      } else {
+        // A turn may ask for many searches at once. Execute in call order so a
+        // failed lookup leaves room for a later call while the number of
+        // successful provider requests can never race beyond the cap.
+        for (const call of turn.toolCalls) {
+          if (successfulToolCalls >= maxSuccessfulToolCalls) {
+            toolResults.push({
+              error: `Successful tool-call limit of ${maxSuccessfulToolCalls} reached`,
+            });
+            continue;
+          }
+
+          const output = await this.executeTool(tools, call, hooks);
+          toolResults.push(output);
+          if (!isToolError(output)) successfulToolCalls += 1;
+        }
+      }
 
       turn.toolCalls.forEach((call, i) => {
         conversation.push({

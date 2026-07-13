@@ -688,6 +688,68 @@ describe('AgentRunnerService', () => {
       expect(result.sources).toEqual([]);
     });
 
+    it('should execute at most five successful Tavily lookups across multi-call turns', async () => {
+      tavilySearch.mockResolvedValue(tavilyResults([]));
+      const calls = Array.from({ length: 7 }, (_, index) => ({
+        id: `c${index + 1}`,
+        name: 'searchWeb',
+        input: { query: `q${index + 1}` },
+      }));
+      mocks.llmService.completeWithTools
+        .mockResolvedValueOnce(toolTurn(calls))
+        .mockResolvedValueOnce(toolTurn([], 0.01, 'findings'));
+      const onToolCall = jest.fn();
+
+      await service.research(
+        { prompt: 'topic', type: ArtifactType.POST },
+        { onToolCall },
+      );
+
+      expect(tavilySearch).toHaveBeenCalledTimes(5);
+      expect(onToolCall).toHaveBeenCalledTimes(5);
+    });
+
+    it('should not consume the five-lookup cap when Tavily fails', async () => {
+      tavilySearch
+        .mockRejectedValueOnce(new Error('Tavily unavailable'))
+        .mockResolvedValue(tavilyResults([]));
+      const calls = Array.from({ length: 6 }, (_, index) => ({
+        id: `c${index + 1}`,
+        name: 'searchWeb',
+        input: { query: `q${index + 1}` },
+      }));
+      mocks.llmService.completeWithTools
+        .mockResolvedValueOnce(toolTurn(calls))
+        .mockResolvedValueOnce(toolTurn([], 0.01, 'findings'));
+      const onToolCall = jest.fn();
+
+      await service.research(
+        { prompt: 'topic', type: ArtifactType.POST },
+        { onToolCall },
+      );
+
+      expect(tavilySearch).toHaveBeenCalledTimes(6);
+      expect(onToolCall).toHaveBeenCalledTimes(5);
+    });
+
+    it('should keep the five-lookup cap across research turns', async () => {
+      tavilySearch.mockResolvedValue(tavilyResults([]));
+      const calls = (prefix: string) =>
+        Array.from({ length: 3 }, (_, index) => ({
+          id: `${prefix}${index + 1}`,
+          name: 'searchWeb',
+          input: { query: `${prefix}${index + 1}` },
+        }));
+      mocks.llmService.completeWithTools
+        .mockResolvedValueOnce(toolTurn(calls('a')))
+        .mockResolvedValueOnce(toolTurn(calls('b')))
+        .mockResolvedValueOnce(toolTurn([], 0.01, 'findings'));
+
+      await service.research({ prompt: 'topic', type: ArtifactType.POST });
+
+      expect(tavilySearch).toHaveBeenCalledTimes(5);
+    });
+
     it('should drive the loop with RESEARCH_MODEL and the searchWeb tool', async () => {
       mocks.llmService.completeWithTools.mockResolvedValueOnce(
         toolTurn([], 0.01, 'no search needed'),

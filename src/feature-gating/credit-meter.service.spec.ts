@@ -23,7 +23,7 @@ describe('CreditMeterService', () => {
     CREDITS_PER_USD: 1000,
     CREDIT_MARKUP: 1.0,
     FALLBACK_CREDITS_PER_1K_TOKENS: 10,
-    CREDIT_SURCHARGE_WEB_SEARCH: 8,
+    CREDIT_SURCHARGE_WEB_SEARCH: 32,
     CREDIT_SURCHARGE_PDF_RENDER: 5,
   };
 
@@ -142,11 +142,11 @@ describe('CreditMeterService', () => {
     });
 
     it('should charge the flat surcharge per web search call', () => {
-      expect(service.toCredits({ kind: 'web_search', amount: 1 })).toBe(8);
+      expect(service.toCredits({ kind: 'web_search', amount: 1 })).toBe(32);
     });
 
     it('should multiply the web search surcharge by the call count', () => {
-      expect(service.toCredits({ kind: 'web_search', amount: 3 })).toBe(24);
+      expect(service.toCredits({ kind: 'web_search', amount: 3 })).toBe(96);
     });
 
     it('should charge the flat surcharge per pdf render', () => {
@@ -160,7 +160,7 @@ describe('CreditMeterService', () => {
     it('should ignore markup for surcharge kinds', () => {
       const { service: marked } = makeService({ CREDIT_MARKUP: 2.5 });
 
-      expect(marked.toCredits({ kind: 'web_search', amount: 1 })).toBe(8);
+      expect(marked.toCredits({ kind: 'web_search', amount: 1 })).toBe(32);
     });
 
     it('should never return a negative credit amount', () => {
@@ -180,7 +180,7 @@ describe('CreditMeterService', () => {
       });
 
       expect(bare.toCredits({ kind: 'llm', amount: 0.01 })).toBe(10);
-      expect(bare.toCredits({ kind: 'web_search', amount: 1 })).toBe(8);
+      expect(bare.toCredits({ kind: 'web_search', amount: 1 })).toBe(32);
     });
   });
 
