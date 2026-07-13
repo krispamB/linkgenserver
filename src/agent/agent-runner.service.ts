@@ -38,7 +38,7 @@ import {
 } from './tools';
 
 const DEFAULT_RESEARCH_MAX_STEPS = 5;
-const MAX_SUCCESSFUL_RESEARCH_LOOKUPS = 5;
+const DEFAULT_RESEARCH_MAX_SUCCESSFUL_SEARCHES = 5;
 
 const describeError = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);
@@ -90,6 +90,7 @@ export class AgentRunnerService implements AgentRunner {
   private readonly generationModel: string;
   private readonly researchModel: string;
   private readonly researchMaxSteps: number;
+  private readonly researchMaxSuccessfulSearches: number;
   private readonly searchWebTool: Tool;
 
   constructor(
@@ -102,6 +103,10 @@ export class AgentRunnerService implements AgentRunner {
     this.researchModel =
       this.configService.getOrThrow<string>('RESEARCH_MODEL');
     this.researchMaxSteps = this.readMaxSteps();
+    this.researchMaxSuccessfulSearches = this.readPositiveInteger(
+      'RESEARCH_MAX_SUCCESSFUL_SEARCHES',
+      DEFAULT_RESEARCH_MAX_SUCCESSFUL_SEARCHES,
+    );
     this.searchWebTool = createSearchWebTool(
       this.configService.getOrThrow<string>('TAVILY_API_KEY'),
     );
@@ -128,7 +133,7 @@ export class AgentRunnerService implements AgentRunner {
         ],
         tools: [this.searchWebTool],
         maxSteps: this.researchMaxSteps,
-        maxSuccessfulToolCalls: MAX_SUCCESSFUL_RESEARCH_LOOKUPS,
+        maxSuccessfulToolCalls: this.researchMaxSuccessfulSearches,
         model: this.researchModel,
       },
       hooks,
@@ -208,20 +213,28 @@ export class AgentRunnerService implements AgentRunner {
           )),
         );
       } else {
-        // A turn may ask for many searches at once. Execute in call order so a
-        // failed lookup leaves room for a later call while the number of
-        // successful provider requests can never race beyond the cap.
-        for (const call of turn.toolCalls) {
-          if (successfulToolCalls >= maxSuccessfulToolCalls) {
-            toolResults.push({
-              error: `Successful tool-call limit of ${maxSuccessfulToolCalls} reached`,
-            });
-            continue;
-          }
-
-          const output = await this.executeTool(tools, call, hooks);
-          toolResults.push(output);
-          if (!isToolError(output)) successfulToolCalls += 1;
+        // Execute bounded parallel waves. A wave can contain at most the
+        // remaining success budget, so it cannot race beyond the cap. Failures
+        // leave vacancies that the next wave fills from later calls.
+        const pending = [...turn.toolCalls];
+        while (
+          pending.length > 0 &&
+          successfulToolCalls < maxSuccessfulToolCalls
+        ) {
+          const available = maxSuccessfulToolCalls - successfulToolCalls;
+          const batch = pending.splice(0, available);
+          const batchResults = await Promise.all(
+            batch.map((call) => this.executeTool(tools, call, hooks)),
+          );
+          toolResults.push(...batchResults);
+          successfulToolCalls += batchResults.filter(
+            (output) => !isToolError(output),
+          ).length;
+        }
+        for (const _call of pending) {
+          toolResults.push({
+            error: `Successful tool-call limit of ${maxSuccessfulToolCalls} reached`,
+          });
         }
       }
 
@@ -401,13 +414,18 @@ export class AgentRunnerService implements AgentRunner {
   }
 
   private readMaxSteps(): number {
-    const raw = this.configService.get<string | number>('RESEARCH_MAX_STEPS');
+    return this.readPositiveInteger(
+      'RESEARCH_MAX_STEPS',
+      DEFAULT_RESEARCH_MAX_STEPS,
+    );
+  }
+
+  private readPositiveInteger(key: string, fallback: number): number {
+    const raw = this.configService.get<string | number>(key);
     if (raw === undefined || raw === null || raw === '') {
-      return DEFAULT_RESEARCH_MAX_STEPS;
+      return fallback;
     }
     const parsed = Number(raw);
-    return Number.isInteger(parsed) && parsed > 0
-      ? parsed
-      : DEFAULT_RESEARCH_MAX_STEPS;
+    return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
   }
 }

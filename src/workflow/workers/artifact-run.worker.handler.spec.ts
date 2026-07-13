@@ -366,6 +366,72 @@ describe('ArtifactRunProcessor', () => {
       expect(mocks.runHandle.complete).toHaveBeenCalledWith(20);
     });
 
+    it('should include one successful research lookup in live usage and final settlement exactly once', async () => {
+      mocks.creditMeter.toCredits.mockImplementation((usage) =>
+        usage.kind === 'web_search' ? 32 : 20,
+      );
+      mocks.agent.research.mockImplementation((_input, hooks) => {
+        hooks.onUsage({
+          promptTokens: 10,
+          completionTokens: 5,
+          totalTokens: 15,
+          cost: 0.01,
+          model: 'test/research-model',
+        });
+        hooks.onToolCall({ name: 'searchWeb' });
+        return Promise.resolve({ findings: 'Found', sources: [] });
+      });
+
+      await processor.process(
+        makeJob({ data: buildInput({ withResearch: true }) }),
+      );
+
+      expect(mocks.creditMeter.toCredits).toHaveBeenCalledWith({
+        kind: 'web_search',
+        amount: 1,
+      });
+      expect(mocks.creditMeter.toCredits).toHaveBeenCalledTimes(2);
+      expect(mocks.runHandle.complete).toHaveBeenCalledWith(52);
+      expect(mocks.creditMeter.debit).toHaveBeenCalledWith('user-1', 52);
+      const usageTicks = mocks.redis.xadd.mock.calls
+        .filter((call) => call[6] === 'usage.tick')
+        .map((call) => JSON.parse(call[8] as string));
+      expect(usageTicks).toEqual([
+        expect.objectContaining({ credits: 20, totalCredits: 20 }),
+        expect.objectContaining({ credits: 32, totalCredits: 52 }),
+      ]);
+    });
+
+    it('should exclude a failed research lookup from live usage and final settlement', async () => {
+      mocks.agent.research.mockImplementation((_input, hooks) => {
+        hooks.onUsage({
+          promptTokens: 10,
+          completionTokens: 5,
+          totalTokens: 15,
+          cost: 0.01,
+          model: 'test/research-model',
+        });
+        // AgentRunner absorbs the failed Tavily result and deliberately does
+        // not invoke onToolCall.
+        return Promise.resolve({ findings: 'Adapted', sources: [] });
+      });
+
+      await processor.process(
+        makeJob({ data: buildInput({ withResearch: true }) }),
+      );
+
+      expect(mocks.creditMeter.toCredits).not.toHaveBeenCalledWith(
+        expect.objectContaining({ kind: 'web_search' }),
+      );
+      expect(mocks.runHandle.complete).toHaveBeenCalledWith(20);
+      expect(mocks.creditMeter.debit).toHaveBeenCalledWith('user-1', 20);
+      expect(
+        mocks.redis.xadd.mock.calls.filter(
+          (call) => call[6] === 'usage.tick',
+        ),
+      ).toHaveLength(1);
+    });
+
     it('should reject a job with no id, since events have nothing to key on', async () => {
       await expect(
         processor.process(makeJob({ id: undefined })),

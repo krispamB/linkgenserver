@@ -50,6 +50,7 @@ export class RunCreditMeter implements CreditMeter {
       data: {
         kind: usage.kind,
         credits,
+        totalCredits: this.used,
         ...(usage.detail ? { detail: usage.detail } : {}),
       },
     });

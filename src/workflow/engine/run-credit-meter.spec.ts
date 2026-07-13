@@ -35,12 +35,12 @@ describe('RunCreditMeter', () => {
     it('should accumulate the converted credits', () => {
       mocks.creditMeterService.toCredits
         .mockReturnValueOnce(24)
-        .mockReturnValueOnce(8);
+        .mockReturnValueOnce(32);
 
       meter.record({ kind: 'llm', amount: 0.0234 });
       meter.record({ kind: 'web_search', amount: 1 });
 
-      expect(meter.creditsUsed).toBe(32);
+      expect(meter.creditsUsed).toBe(56);
     });
 
     it('should delegate the conversion to CreditMeterService', () => {
@@ -67,19 +67,20 @@ describe('RunCreditMeter', () => {
         data: {
           kind: 'llm',
           credits: 24,
+          totalCredits: 24,
           detail: { model: 'gpt-5', totalTokens: 1200 },
         },
       });
     });
 
     it('should omit detail from the tick when the usage carries none', () => {
-      mocks.creditMeterService.toCredits.mockReturnValue(8);
+      mocks.creditMeterService.toCredits.mockReturnValue(32);
 
       meter.record({ kind: 'web_search', amount: 1 });
 
       expect(mocks.emit).toHaveBeenCalledWith({
         type: RunEventType.USAGE_TICK,
-        data: { kind: 'web_search', credits: 8 },
+        data: { kind: 'web_search', credits: 32, totalCredits: 32 },
       });
     });
 
