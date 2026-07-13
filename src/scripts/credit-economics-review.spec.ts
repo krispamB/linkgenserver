@@ -4,18 +4,43 @@ import {
   type CreditEconomicsReviewInput,
 } from './credit-economics-review';
 
-describe('credit economics review', () => {
+describe('CreditEconomicsReview', () => {
   const makeInput = (): CreditEconomicsReviewInput => ({
     cohort: {
-      paidUsers: 100,
       billingCycle: {
         start: '2026-06-01T00:00:00.000Z',
         end: '2026-07-01T00:00:00.000Z',
         complete: false,
       },
+      users: [
+        ...Array.from({ length: 50 }, (_, index) => ({
+          userId: `starter-${index + 1}`,
+          tier: 'Starter' as const,
+          allowanceCredits: 2000,
+          exhausted: index < 5,
+          subscriptionRevenueUsd: 10,
+        })),
+        ...Array.from({ length: 30 }, (_, index) => ({
+          userId: `creator-${index + 1}`,
+          tier: 'Creator' as const,
+          allowanceCredits: 10000,
+          exhausted: index < 6,
+          subscriptionRevenueUsd: 20,
+        })),
+        ...Array.from({ length: 20 }, (_, index) => ({
+          userId: `pro-${index + 1}`,
+          tier: 'Pro Writer' as const,
+          allowanceCredits: 30000,
+          exhausted: index < 10,
+          subscriptionRevenueUsd: 30,
+        })),
+      ],
     },
     runs: [
       {
+        runId: 'post-quick-1',
+        userId: 'starter-1',
+        occurredAt: '2026-06-10T00:00:00.000Z',
         artifactType: 'POST',
         withResearch: false,
         credits: 10,
@@ -23,8 +48,12 @@ describe('credit economics review', () => {
         browserlessUnits: [],
         attempts: 1,
         status: 'COMPLETED',
+        providerCostUsd: { openrouter: 10, tavily: 0, browserless: 0 },
       },
       {
+        runId: 'post-quick-2',
+        userId: 'starter-2',
+        occurredAt: '2026-06-11T00:00:00.000Z',
         artifactType: 'POST',
         withResearch: false,
         credits: 20,
@@ -32,8 +61,12 @@ describe('credit economics review', () => {
         browserlessUnits: [],
         attempts: 2,
         status: 'COMPLETED',
+        providerCostUsd: { openrouter: 10, tavily: 0, browserless: 0 },
       },
       {
+        runId: 'post-research-1',
+        userId: 'starter-3',
+        occurredAt: '2026-06-12T00:00:00.000Z',
         artifactType: 'POST',
         withResearch: true,
         credits: 50,
@@ -41,8 +74,12 @@ describe('credit economics review', () => {
         browserlessUnits: [],
         attempts: 1,
         status: 'COMPLETED',
+        providerCostUsd: { openrouter: 10, tavily: 5, browserless: 0 },
       },
       {
+        runId: 'post-research-2',
+        userId: 'starter-4',
+        occurredAt: '2026-06-13T00:00:00.000Z',
         artifactType: 'POST',
         withResearch: true,
         credits: 90,
@@ -50,8 +87,12 @@ describe('credit economics review', () => {
         browserlessUnits: [],
         attempts: 1,
         status: 'FAILED',
+        providerCostUsd: { openrouter: 10, tavily: 5, browserless: 0 },
       },
       {
+        runId: 'poll-quick-1',
+        userId: 'creator-1',
+        occurredAt: '2026-06-14T00:00:00.000Z',
         artifactType: 'POLL',
         withResearch: false,
         credits: 12,
@@ -59,8 +100,12 @@ describe('credit economics review', () => {
         browserlessUnits: [],
         attempts: 1,
         status: 'COMPLETED',
+        providerCostUsd: { openrouter: 10, tavily: 0, browserless: 0 },
       },
       {
+        runId: 'poll-quick-2',
+        userId: 'creator-2',
+        occurredAt: '2026-06-15T00:00:00.000Z',
         artifactType: 'POLL',
         withResearch: false,
         credits: 24,
@@ -68,8 +113,12 @@ describe('credit economics review', () => {
         browserlessUnits: [],
         attempts: 1,
         status: 'COMPLETED',
+        providerCostUsd: { openrouter: 10, tavily: 0, browserless: 0 },
       },
       {
+        runId: 'poll-research-1',
+        userId: 'creator-3',
+        occurredAt: '2026-06-16T00:00:00.000Z',
         artifactType: 'POLL',
         withResearch: true,
         credits: 60,
@@ -77,8 +126,12 @@ describe('credit economics review', () => {
         browserlessUnits: [],
         attempts: 1,
         status: 'COMPLETED',
+        providerCostUsd: { openrouter: 10, tavily: 5, browserless: 0 },
       },
       {
+        runId: 'poll-research-2',
+        userId: 'creator-4',
+        occurredAt: '2026-06-17T00:00:00.000Z',
         artifactType: 'POLL',
         withResearch: true,
         credits: 100,
@@ -86,8 +139,12 @@ describe('credit economics review', () => {
         browserlessUnits: [],
         attempts: 1,
         status: 'COMPLETED',
+        providerCostUsd: { openrouter: 10, tavily: 5, browserless: 0 },
       },
       {
+        runId: 'document-quick-1',
+        userId: 'pro-1',
+        occurredAt: '2026-06-18T00:00:00.000Z',
         artifactType: 'DOCUMENT',
         withResearch: false,
         credits: 20,
@@ -95,8 +152,12 @@ describe('credit economics review', () => {
         browserlessUnits: [1],
         attempts: 1,
         status: 'COMPLETED',
+        providerCostUsd: { openrouter: 10, tavily: 0, browserless: 5 },
       },
       {
+        runId: 'document-quick-2',
+        userId: 'pro-2',
+        occurredAt: '2026-06-19T00:00:00.000Z',
         artifactType: 'DOCUMENT',
         withResearch: false,
         credits: 40,
@@ -104,8 +165,12 @@ describe('credit economics review', () => {
         browserlessUnits: [2, 3],
         attempts: 2,
         status: 'COMPLETED',
+        providerCostUsd: { openrouter: 10, tavily: 0, browserless: 5 },
       },
       {
+        runId: 'document-research-1',
+        userId: 'pro-3',
+        occurredAt: '2026-06-20T00:00:00.000Z',
         artifactType: 'DOCUMENT',
         withResearch: true,
         credits: 80,
@@ -113,8 +178,12 @@ describe('credit economics review', () => {
         browserlessUnits: [2],
         attempts: 1,
         status: 'COMPLETED',
+        providerCostUsd: { openrouter: 10, tavily: 5, browserless: 5 },
       },
       {
+        runId: 'document-research-2',
+        userId: 'pro-4',
+        occurredAt: '2026-06-21T00:00:00.000Z',
         artifactType: 'DOCUMENT',
         withResearch: true,
         credits: 120,
@@ -122,37 +191,30 @@ describe('credit economics review', () => {
         browserlessUnits: [4],
         attempts: 1,
         status: 'COMPLETED',
+        providerCostUsd: { openrouter: 10, tavily: 5, browserless: 5 },
       },
     ],
     providerInvoices: [
-      { provider: 'OPENROUTER', amountUsd: 100, reference: 'inv-openrouter' },
-      { provider: 'TAVILY', amountUsd: 30, reference: 'inv-tavily' },
-      { provider: 'BROWSERLESS', amountUsd: 20, reference: 'inv-browserless' },
-    ],
-    tiers: [
       {
-        tier: 'Starter',
-        paidUsers: 50,
-        allowanceCredits: 2000,
-        exhaustedUsers: 5,
-        subscriptionRevenueUsd: 500,
-        providerCostUsd: 50,
+        provider: 'OPENROUTER',
+        amountUsd: 120,
+        reference: 'inv-openrouter',
+        periodStart: '2026-06-01T00:00:00.000Z',
+        periodEnd: '2026-07-01T00:00:00.000Z',
       },
       {
-        tier: 'Creator',
-        paidUsers: 30,
-        allowanceCredits: 10000,
-        exhaustedUsers: 6,
-        subscriptionRevenueUsd: 600,
-        providerCostUsd: 120,
+        provider: 'TAVILY',
+        amountUsd: 30,
+        reference: 'inv-tavily',
+        periodStart: '2026-06-01T00:00:00.000Z',
+        periodEnd: '2026-07-01T00:00:00.000Z',
       },
       {
-        tier: 'Pro Writer',
-        paidUsers: 20,
-        allowanceCredits: 30000,
-        exhaustedUsers: 10,
-        subscriptionRevenueUsd: 600,
-        providerCostUsd: 180,
+        provider: 'BROWSERLESS',
+        amountUsd: 20,
+        reference: 'inv-browserless',
+        periodStart: '2026-06-01T00:00:00.000Z',
+        periodEnd: '2026-07-01T00:00:00.000Z',
       },
     ],
     decision: {
@@ -185,28 +247,26 @@ describe('credit economics review', () => {
   });
 
   describe('analyzeCreditEconomics', () => {
-    it('should reject an incomplete cycle with fewer than 100 paid users', () => {
+    it('should reject the review when an incomplete cycle has fewer than 100 paid users', () => {
       const input = makeInput();
-      input.cohort.paidUsers = 99;
-      input.tiers[0].paidUsers = 49;
+      input.cohort.users = input.cohort.users.slice(0, 99);
 
       expect(() => analyzeCreditEconomics(input)).toThrow(
         'requires one complete paid billing cycle or a cohort of 100 to 200 paid users',
       );
     });
 
-    it('should accept a complete paid billing cycle with fewer than 100 users', () => {
+    it('should accept the review when a complete paid billing cycle has fewer than 100 users', () => {
       const input = makeInput();
       input.cohort.billingCycle.complete = true;
-      input.cohort.paidUsers = 99;
-      input.tiers[0].paidUsers = 49;
+      input.cohort.users = input.cohort.users.slice(0, 99);
 
       expect(analyzeCreditEconomics(input).eligibilityBasis).toBe(
         'complete paid billing cycle',
       );
     });
 
-    it('should report p50 and p95 credits for every artifact and research slice', () => {
+    it('should report p50 and p95 credits when every artifact and research slice is present', () => {
       const review = analyzeCreditEconomics(makeInput());
 
       expect(review.artifactCredits).toHaveLength(6);
@@ -233,7 +293,7 @@ describe('credit economics review', () => {
       });
     });
 
-    it('should reject a review missing one artifact and research slice', () => {
+    it('should reject the review when an artifact and research slice is missing', () => {
       const input = makeInput();
       input.runs = input.runs.filter(
         (run) => !(run.artifactType === 'POLL' && run.withResearch),
@@ -244,7 +304,7 @@ describe('credit economics review', () => {
       );
     });
 
-    it('should report provider operations, retries, failures, and invoice reconciliation', () => {
+    it('should report provider operations, retries, failures, and invoice reconciliation when evidence is complete', () => {
       const review = analyzeCreditEconomics(makeInput());
 
       expect(review.operations).toEqual({
@@ -256,13 +316,13 @@ describe('credit economics review', () => {
         failureRatePercent: 8.33,
       });
       expect(review.invoices).toMatchObject({
-        invoiceTotalUsd: 150,
-        attributedProviderCostUsd: 350,
-        reconciliationDeltaUsd: -200,
+        invoiceTotalUsd: 170,
+        attributedProviderCostUsd: 170,
+        reconciliationDeltaUsd: 0,
       });
     });
 
-    it('should compare realized margin and exhaustion with intended tier economics', () => {
+    it('should compare realized margin and exhaustion when tier economics are supplied', () => {
       const review = analyzeCreditEconomics(makeInput());
 
       expect(review.tiers).toContainEqual({
@@ -271,14 +331,14 @@ describe('credit economics review', () => {
         allowanceCredits: 10000,
         exhaustionRatePercent: 20,
         subscriptionRevenueUsd: 600,
-        providerCostUsd: 120,
-        realizedGrossMarginPercent: 80,
+        providerCostUsd: 50,
+        realizedGrossMarginPercent: 91.67,
         intendedGrossMarginFloorPercent: 75,
-        marginDeltaPercent: 5,
+        marginDeltaPercent: 16.67,
       });
     });
 
-    it('should require a separate implementation issue for every approved change', () => {
+    it('should require a separate implementation issue when a change is approved', () => {
       const input = makeInput();
       input.decision.items[0] = {
         area: 'MARKUP',
@@ -291,9 +351,9 @@ describe('credit economics review', () => {
       );
     });
 
-    it('should reject unlimited current or proposed paid allowances', () => {
+    it('should reject the review when current or proposed paid allowances are unlimited', () => {
       const current = makeInput();
-      current.tiers[2].allowanceCredits = -1;
+      current.cohort.users[99].allowanceCredits = -1;
       expect(() => analyzeCreditEconomics(current)).toThrow();
 
       const proposed = makeInput();
@@ -311,10 +371,51 @@ describe('credit economics review', () => {
       };
       expect(() => analyzeCreditEconomics(proposed)).toThrow();
     });
+
+    it('should reject the review when provider invoices do not reconcile to observed run cost', () => {
+      const input = makeInput();
+      input.providerInvoices[0].amountUsd = 100;
+
+      expect(() => analyzeCreditEconomics(input)).toThrow(
+        'OPENROUTER invoice does not reconcile',
+      );
+    });
+
+    it('should reject an approved change when its URL is not a repository implementation issue', () => {
+      const input = makeInput();
+      input.decision.items[0] = {
+        area: 'MARKUP',
+        action: 'CHANGE',
+        rationale: 'Observed costs require a change.',
+        implementationIssue: 'https://example.com/not-an-issue',
+      };
+
+      expect(() => analyzeCreditEconomics(input)).toThrow(
+        'implementationIssue must link to a linkgenserver GitHub issue',
+      );
+    });
+
+    it('should reject a run when it is not linked to the billing window', () => {
+      const input = makeInput();
+      input.runs[0].occurredAt = '2026-07-02T00:00:00.000Z';
+
+      expect(() => analyzeCreditEconomics(input)).toThrow(
+        'falls outside the billing window',
+      );
+    });
+
+    it('should reject invoice evidence when its period does not match the billing window', () => {
+      const input = makeInput();
+      input.providerInvoices[0].periodStart = '2026-05-01T00:00:00.000Z';
+
+      expect(() => analyzeCreditEconomics(input)).toThrow(
+        'invoice does not match the billing window',
+      );
+    });
   });
 
   describe('renderCreditEconomicsReport', () => {
-    it('should render the evidence, margin comparison, and human decision', () => {
+    it('should render the evidence, margin comparison, and human decision when analysis succeeds', () => {
       const report = renderCreditEconomicsReport(
         analyzeCreditEconomics(makeInput()),
       );

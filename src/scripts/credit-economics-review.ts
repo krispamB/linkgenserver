@@ -32,17 +32,30 @@ const decisionItemSchema = z.object({
 export const creditEconomicsReviewInputSchema = z
   .object({
     cohort: z.object({
-      paidUsers: z.number().int().positive(),
       billingCycle: z.object({
         start: z.string().datetime(),
         end: z.string().datetime(),
         complete: z.boolean(),
       }),
+      users: z
+        .array(
+          z.object({
+            userId: z.string().trim().min(1),
+            tier: z.enum(paidTiers),
+            allowanceCredits: finiteAllowanceSchema,
+            exhausted: z.boolean(),
+            subscriptionRevenueUsd: z.number().nonnegative(),
+          }),
+        )
+        .min(1),
     }),
     runs: z
       .array(
         z
           .object({
+            runId: z.string().trim().min(1),
+            userId: z.string().trim().min(1),
+            occurredAt: z.string().datetime(),
             artifactType: z.enum(artifactTypes),
             withResearch: z.boolean(),
             credits: z.number().int().nonnegative(),
@@ -50,6 +63,11 @@ export const creditEconomicsReviewInputSchema = z
             browserlessUnits: z.array(z.number().int().positive()),
             attempts: z.number().int().positive(),
             status: z.enum(['COMPLETED', 'FAILED']),
+            providerCostUsd: z.object({
+              openrouter: z.number().nonnegative(),
+              tavily: z.number().nonnegative(),
+              browserless: z.number().nonnegative(),
+            }),
           })
           .superRefine((run, ctx) => {
             if (!run.withResearch && run.successfulTavilyLookups !== 0) {
@@ -78,21 +96,11 @@ export const creditEconomicsReviewInputSchema = z
           provider: z.enum(['OPENROUTER', 'TAVILY', 'BROWSERLESS']),
           amountUsd: z.number().nonnegative(),
           reference: z.string().trim().min(1),
+          periodStart: z.string().datetime(),
+          periodEnd: z.string().datetime(),
         }),
       )
       .min(3),
-    tiers: z
-      .array(
-        z.object({
-          tier: z.enum(paidTiers),
-          paidUsers: z.number().int().nonnegative(),
-          allowanceCredits: finiteAllowanceSchema,
-          exhaustedUsers: z.number().int().nonnegative(),
-          subscriptionRevenueUsd: z.number().nonnegative(),
-          providerCostUsd: z.number().nonnegative(),
-        }),
-      )
-      .length(3),
     decision: z.object({
       owner: z.string().trim().min(1),
       decidedAt: z.string().datetime(),
@@ -111,35 +119,73 @@ export const creditEconomicsReviewInputSchema = z
       });
     }
 
-    const tierNames = new Set(input.tiers.map(({ tier }) => tier));
+    const userIds = new Set<string>();
+    input.cohort.users.forEach((user, index) => {
+      if (userIds.has(user.userId)) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['cohort', 'users', index, 'userId'],
+          message: `duplicate paid user ${user.userId}`,
+        });
+      }
+      userIds.add(user.userId);
+    });
+
+    const tierNames = new Set(input.cohort.users.map(({ tier }) => tier));
     for (const tier of paidTiers) {
       if (!tierNames.has(tier)) {
         ctx.addIssue({
           code: 'custom',
-          path: ['tiers'],
+          path: ['cohort', 'users'],
           message: `missing ${tier} economics`,
         });
       }
     }
 
-    const tierUsers = input.tiers.reduce(
-      (total, tier) => total + tier.paidUsers,
-      0,
-    );
-    if (tierUsers !== input.cohort.paidUsers) {
+    const cycleStart = new Date(input.cohort.billingCycle.start).getTime();
+    const cycleEnd = new Date(input.cohort.billingCycle.end).getTime();
+    const decisionTime = new Date(input.decision.decidedAt).getTime();
+    if (cycleEnd > decisionTime) {
       ctx.addIssue({
         code: 'custom',
-        path: ['tiers'],
-        message: 'tier paid-user counts must equal the cohort paid-user count',
+        path: ['decision', 'decidedAt'],
+        message: 'decision cannot predate the reviewed billing window',
+      });
+    }
+    if (
+      input.cohort.billingCycle.complete &&
+      cycleEnd - cycleStart < 28 * 24 * 60 * 60 * 1000
+    ) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['cohort', 'billingCycle'],
+        message: 'a complete paid billing cycle must span at least 28 days',
       });
     }
 
-    input.tiers.forEach((tier, index) => {
-      if (tier.exhaustedUsers > tier.paidUsers) {
+    const runIds = new Set<string>();
+    input.runs.forEach((run, index) => {
+      if (runIds.has(run.runId)) {
         ctx.addIssue({
           code: 'custom',
-          path: ['tiers', index, 'exhaustedUsers'],
-          message: 'exhausted users cannot exceed paid users',
+          path: ['runs', index, 'runId'],
+          message: `duplicate run ${run.runId}`,
+        });
+      }
+      runIds.add(run.runId);
+      if (!userIds.has(run.userId)) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['runs', index, 'userId'],
+          message: `run ${run.runId} does not belong to a paid cohort user`,
+        });
+      }
+      const occurredAt = new Date(run.occurredAt).getTime();
+      if (occurredAt < cycleStart || occurredAt >= cycleEnd) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['runs', index, 'occurredAt'],
+          message: `run ${run.runId} falls outside the billing window`,
         });
       }
     });
@@ -156,6 +202,18 @@ export const creditEconomicsReviewInputSchema = z
         });
       }
     }
+    input.providerInvoices.forEach((invoice, index) => {
+      if (
+        invoice.periodStart !== input.cohort.billingCycle.start ||
+        invoice.periodEnd !== input.cohort.billingCycle.end
+      ) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['providerInvoices', index],
+          message: `${invoice.provider} invoice does not match the billing window`,
+        });
+      }
+    });
 
     const areas = new Set(input.decision.items.map(({ area }) => area));
     for (const area of decisionAreas) {
@@ -174,6 +232,20 @@ export const creditEconomicsReviewInputSchema = z
           code: 'custom',
           path: ['decision', 'items', index, 'implementationIssue'],
           message: `${item.area} changes require a separate implementation issue`,
+        });
+      }
+      if (
+        item.action === 'CHANGE' &&
+        item.implementationIssue &&
+        !/^https:\/\/github\.com\/krispamB\/linkgenserver\/issues\/\d+$/.test(
+          item.implementationIssue,
+        )
+      ) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['decision', 'items', index, 'implementationIssue'],
+          message:
+            'implementationIssue must link to a linkgenserver GitHub issue',
         });
       }
       if (
@@ -222,7 +294,10 @@ export interface TierEconomicsMetrics {
 }
 
 export interface CreditEconomicsReview {
-  cohort: CreditEconomicsReviewInput['cohort'];
+  cohort: {
+    paidUsers: number;
+    billingCycle: CreditEconomicsReviewInput['cohort']['billingCycle'];
+  };
   eligibilityBasis: 'complete paid billing cycle' | '100–200 paid-user cohort';
   artifactCredits: ArtifactCreditMetrics[];
   operations: {
@@ -268,16 +343,16 @@ const distribution = (values: number[]): Distribution => ({
   ),
 });
 
-const rate = (numerator: number, denominator: number): number =>
+const percentageRate = (numerator: number, denominator: number): number =>
   denominator === 0 ? 0 : round((numerator / denominator) * 100);
 
 export const analyzeCreditEconomics = (
   candidate: unknown,
 ): CreditEconomicsReview => {
   const input = creditEconomicsReviewInputSchema.parse(candidate);
+  const paidUsers = input.cohort.users.length;
   const cycleEligible = input.cohort.billingCycle.complete;
-  const cohortEligible =
-    input.cohort.paidUsers >= 100 && input.cohort.paidUsers <= 200;
+  const cohortEligible = paidUsers >= 100 && paidUsers <= 200;
 
   if (!cycleEligible && !cohortEligible) {
     throw new Error(
@@ -328,28 +403,90 @@ export const analyzeCreditEconomics = (
     ),
   );
   const attributedProviderCostUsd = round(
-    input.tiers.reduce((total, tier) => total + tier.providerCostUsd, 0),
+    input.runs.reduce(
+      (total, run) =>
+        total +
+        run.providerCostUsd.openrouter +
+        run.providerCostUsd.tavily +
+        run.providerCostUsd.browserless,
+      0,
+    ),
   );
 
+  const providerCosts = {
+    OPENROUTER: round(
+      input.runs.reduce(
+        (total, run) => total + run.providerCostUsd.openrouter,
+        0,
+      ),
+    ),
+    TAVILY: round(
+      input.runs.reduce((total, run) => total + run.providerCostUsd.tavily, 0),
+    ),
+    BROWSERLESS: round(
+      input.runs.reduce(
+        (total, run) => total + run.providerCostUsd.browserless,
+        0,
+      ),
+    ),
+  };
+  for (const provider of ['OPENROUTER', 'TAVILY', 'BROWSERLESS'] as const) {
+    const invoiced = round(
+      input.providerInvoices
+        .filter((invoice) => invoice.provider === provider)
+        .reduce((total, invoice) => total + invoice.amountUsd, 0),
+    );
+    const tolerance = Math.max(1, invoiced * 0.01);
+    if (Math.abs(invoiced - providerCosts[provider]) > tolerance) {
+      throw new Error(
+        `${provider} invoice does not reconcile to observed run cost: invoiced ${formatUsd(invoiced)}, observed ${formatUsd(providerCosts[provider])}`,
+      );
+    }
+  }
+
   const tiers = paidTiers.map((tierName): TierEconomicsMetrics => {
-    const tier = input.tiers.find(({ tier }) => tier === tierName)!;
+    const users = input.cohort.users.filter(({ tier }) => tier === tierName);
+    const allowances = new Set(
+      users.map(({ allowanceCredits }) => allowanceCredits),
+    );
+    if (allowances.size !== 1) {
+      throw new Error(`${tierName} users must share one finite allowance`);
+    }
+    const subscriptionRevenueUsd = round(
+      users.reduce((total, user) => total + user.subscriptionRevenueUsd, 0),
+    );
+    const providerCostUsd = round(
+      input.runs
+        .filter((run) => users.some(({ userId }) => userId === run.userId))
+        .reduce(
+          (total, run) =>
+            total +
+            run.providerCostUsd.openrouter +
+            run.providerCostUsd.tavily +
+            run.providerCostUsd.browserless,
+          0,
+        ),
+    );
     const realizedGrossMarginPercent =
-      tier.subscriptionRevenueUsd === 0
+      subscriptionRevenueUsd === 0
         ? 0
         : round(
-            ((tier.subscriptionRevenueUsd - tier.providerCostUsd) /
-              tier.subscriptionRevenueUsd) *
+            ((subscriptionRevenueUsd - providerCostUsd) /
+              subscriptionRevenueUsd) *
               100,
           );
     const intended = intendedGrossMarginFloorPercent[tierName];
 
     return {
       tier: tierName,
-      paidUsers: tier.paidUsers,
-      allowanceCredits: tier.allowanceCredits,
-      exhaustionRatePercent: rate(tier.exhaustedUsers, tier.paidUsers),
-      subscriptionRevenueUsd: tier.subscriptionRevenueUsd,
-      providerCostUsd: tier.providerCostUsd,
+      paidUsers: users.length,
+      allowanceCredits: users[0].allowanceCredits,
+      exhaustionRatePercent: percentageRate(
+        users.filter(({ exhausted }) => exhausted).length,
+        users.length,
+      ),
+      subscriptionRevenueUsd,
+      providerCostUsd,
       realizedGrossMarginPercent,
       intendedGrossMarginFloorPercent: intended,
       marginDeltaPercent: round(realizedGrossMarginPercent - intended),
@@ -357,7 +494,10 @@ export const analyzeCreditEconomics = (
   });
 
   return {
-    cohort: input.cohort,
+    cohort: {
+      paidUsers,
+      billingCycle: input.cohort.billingCycle,
+    },
     eligibilityBasis: cycleEligible
       ? 'complete paid billing cycle'
       : '100–200 paid-user cohort',
@@ -371,11 +511,11 @@ export const analyzeCreditEconomics = (
       ),
       browserlessRenders: browserlessUnits.length,
       browserlessUnits: distribution(browserlessUnits),
-      retryRatePercent: rate(
+      retryRatePercent: percentageRate(
         input.runs.filter(({ attempts }) => attempts > 1).length,
         input.runs.length,
       ),
-      failureRatePercent: rate(
+      failureRatePercent: percentageRate(
         input.runs.filter(({ status }) => status === 'FAILED').length,
         input.runs.length,
       ),

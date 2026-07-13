@@ -21,25 +21,29 @@ record after the owner has verified its totals and recorded all five decisions.
 
 ## Input contract
 
-The top-level object has five fields:
+The top-level object has four fields:
 
-- `cohort`: `paidUsers` and a `billingCycle` with ISO `start`, ISO `end`, and
-  `complete`. An incomplete cycle is accepted only for 100–200 paid users.
-- `runs`: normalized workflow observations with `artifactType` (`POST`, `POLL`,
-  or `DOCUMENT`), `withResearch`, `credits`, successful Tavily lookup count,
-  Browserless units for every render attempt, whole-job `attempts`, and final
-  `status`. Supply at least one observation for each of the six artifact ×
-  research combinations.
+- `cohort`: a `billingCycle` with ISO `start`, ISO `end`, and `complete`, plus
+  opaque `users`. Each paid-user row supplies its stable export ID, tier, finite
+  allowance, exhaustion status, and recognized subscription revenue. Cohort
+  size and tier economics are derived from these rows instead of accepted as
+  summary assertions. An incomplete cycle is accepted only for 100–200 users.
+- `runs`: normalized workflow observations with a unique `runId`, cohort
+  `userId`, in-window `occurredAt`, `artifactType` (`POST`, `POLL`, or
+  `DOCUMENT`), `withResearch`, settled `credits`, successful Tavily lookup
+  count, Browserless units for every render attempt, whole-job `attempts`, final
+  `status`, and observed `providerCostUsd` split across OpenRouter, Tavily, and
+  Browserless. Supply at least one completed observation for each of the six
+  artifact × research combinations.
 - `providerInvoices`: at least one `OPENROUTER`, `TAVILY`, and `BROWSERLESS`
-  invoice row with `amountUsd` and a non-secret evidence `reference`.
-- `tiers`: exactly one row each for Starter, Creator, and Pro Writer. Each row
-  supplies paid users, finite positive allowance, exhausted users, recognized
-  subscription revenue, and provider cost attributed to that tier.
+  invoice row with `amountUsd`, the exact billing-window `periodStart` and
+  `periodEnd`, and a non-secret evidence `reference`. Each provider total must
+  reconcile to observed run cost within the larger of $1 or 1%.
 - `decision`: the human `owner`, ISO `decidedAt`, and one item for each of
   `MARKUP`, `SEARCH_PRICING`, `RENDER_PRICING`, `TIER_ALLOWANCES`, and `TOP_UPS`.
   Every item is `RETAIN` or `CHANGE` with a rationale. A change requires an
-  `implementationIssue`; a tier-allowance change also requires finite positive
-  `proposedTierAllowances` for all three paid tiers.
+  `implementationIssue` in this repository; a tier-allowance change also
+  requires finite positive `proposedTierAllowances` for all three paid tiers.
 
 Example decision item:
 
@@ -54,22 +58,22 @@ Example decision item:
 
 ## Preparing production evidence
 
-Use paid-user workflow runs whose creation time falls inside the selected
-billing window. Join each run to its artifact to obtain `artifactType` and
+Use opaque or hashed stable identifiers for paid users in the selected billing
+window; do not put customer PII in the normalized export. Join each workflow run
+to its paid user and artifact to obtain the billing tier, `artifactType`, and
 `withResearch`. Use the final settled credit count for successful runs and the
 retained attempt telemetry for retry/failure analysis. Browserless units come
 from `WorkflowRun.renderAttempts`; include successful and failed render attempts
 so invoice exposure is visible.
 
-Successful Tavily lookup counts, whole-job attempt counts, and provider cost
-attribution must be assembled from retained application/queue observability and
-the vendor exports for the same window. Do not infer provider economics from raw
-token counts: OpenRouter's reported cost and the actual Tavily and Browserless
+Successful Tavily lookup counts, whole-job attempt counts, and per-run provider
+cost attribution must be assembled from retained application/queue observability
+and vendor exports for the same window. Do not infer provider economics from raw
+token counts: OpenRouter's reported cost and actual Tavily and Browserless
 invoice evidence are the source of truth.
 
-Reconcile the invoice total against provider cost attributed across the three
-paid tiers. The generated report shows the delta instead of hiding it; the human
-owner must investigate a material difference before approving the decision.
+The analyzer reconciles each provider's invoice total against observed run cost
+before it will generate a report. The report also shows the aggregate delta.
 
 ## Metric definitions
 
