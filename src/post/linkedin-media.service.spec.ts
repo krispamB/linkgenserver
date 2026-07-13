@@ -305,4 +305,61 @@ describe('LinkedinMediaService', () => {
       ).rejects.toThrow('LinkedIn video processing failed');
     });
   });
+
+  describe('uploadDocument', () => {
+    it('should PUT the whole document once without finalizing when the upload is initialized', async () => {
+      const mockedApiFetch = apiFetch as jest.Mock;
+      mockedApiFetch
+        .mockResolvedValueOnce({
+          data: {
+            value: {
+              uploadUrl: 'https://upload.example.com/document',
+              document: 'urn:li:document:1',
+            },
+          },
+        })
+        .mockResolvedValueOnce({ data: {}, response: {} })
+        .mockResolvedValueOnce({ data: { status: 'AVAILABLE' } });
+      const fileBuffer = Buffer.from('pdf-bytes');
+
+      await expect(
+        service.uploadDocument('urn:li:person:abc', 'token', fileBuffer, 12),
+      ).resolves.toBe('urn:li:document:1');
+
+      expect(mockedApiFetch).toHaveBeenCalledTimes(3);
+      expect(mockedApiFetch.mock.calls[0][0]).toContain(
+        '/documents?action=initializeUpload',
+      );
+      expect(mockedApiFetch.mock.calls[1]).toEqual([
+        'https://upload.example.com/document',
+        expect.objectContaining({ method: 'PUT', body: fileBuffer }),
+      ]);
+      expect(
+        mockedApiFetch.mock.calls.some(([url]) =>
+          String(url).includes('finalizeUpload'),
+        ),
+      ).toBe(false);
+    });
+
+    it('should reject the document before upload when it exceeds 100 MB', async () => {
+      const oversized = Buffer.alloc(100 * 1024 * 1024 + 1);
+
+      await expect(
+        service.uploadDocument('urn:li:person:abc', 'token', oversized, 1),
+      ).rejects.toThrow('100 MB');
+      expect(apiFetch).not.toHaveBeenCalled();
+    });
+
+    it('should reject the document before upload when it exceeds 300 pages', async () => {
+      await expect(
+        service.uploadDocument(
+          'urn:li:person:abc',
+          'token',
+          Buffer.from('pdf'),
+          301,
+        ),
+      ).rejects.toThrow('300 pages');
+      expect(apiFetch).not.toHaveBeenCalled();
+    });
+  });
 });

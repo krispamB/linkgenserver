@@ -13,6 +13,7 @@ import { delay } from 'src/common/HelperFn';
 import { deleteFile, getFile } from 'src/s3';
 import { IVideoInitResponse } from './post.interface';
 import {
+  MediaType,
   MediaUploadJobData,
   MediaUploadJobItem,
 } from '../workflow/media-upload.queue';
@@ -63,7 +64,7 @@ export class LinkedinMediaService {
 
       const fileBuffer = await getFile(item.r2Key);
       const urn =
-        item.mediaType === 'VIDEO'
+        item.mediaType === MediaType.VIDEO
           ? await this.uploadVideo(ownerUrn, accessToken, fileBuffer)
           : await this.uploadImage(ownerUrn, accessToken, fileBuffer);
 
@@ -239,18 +240,88 @@ export class LinkedinMediaService {
     return videoUrn;
   }
 
+  async uploadDocument(
+    ownerUrn: string,
+    accessToken: string,
+    fileBuffer: Buffer,
+    pageCount: number,
+  ): Promise<string> {
+    const maxDocumentBytes = 100 * 1024 * 1024;
+    if (fileBuffer.length > maxDocumentBytes) {
+      throw new BadRequestException('LinkedIn documents cannot exceed 100 MB');
+    }
+    if (pageCount > 300) {
+      throw new BadRequestException(
+        'LinkedIn documents cannot exceed 300 pages',
+      );
+    }
+
+    const headers = {
+      'Content-Type': 'application/json',
+      'X-Restli-Protocol-Version': '2.0.0',
+      'LinkedIn-Version': '202601',
+      Authorization: `Bearer ${accessToken}`,
+    };
+    const { data } = await apiFetch<{
+      value: { uploadUrl: string; document: string };
+    }>(`${this.LINKEDIN_API_BASE}/documents?action=initializeUpload`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ initializeUploadRequest: { owner: ownerUrn } }),
+    });
+
+    await apiFetch(data.value.uploadUrl, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/octet-stream',
+        Authorization: `Bearer ${accessToken}`,
+      },
+      body: fileBuffer as unknown as BodyInit,
+    });
+    await this.waitForDocumentAvailable(data.value.document, accessToken);
+    return data.value.document;
+  }
+
   private async waitForVideoAvailable(
     videoUrn: string,
     accessToken: string,
     timeoutMs = 300_000,
   ): Promise<void> {
-    const encodedUrn = encodeURIComponent(videoUrn);
+    return this.waitForMediaAvailable(
+      'video',
+      videoUrn,
+      accessToken,
+      timeoutMs,
+    );
+  }
+
+  private async waitForDocumentAvailable(
+    documentUrn: string,
+    accessToken: string,
+    timeoutMs = 300_000,
+  ): Promise<void> {
+    return this.waitForMediaAvailable(
+      'document',
+      documentUrn,
+      accessToken,
+      timeoutMs,
+    );
+  }
+
+  private async waitForMediaAvailable(
+    mediaType: 'video' | 'document',
+    mediaUrn: string,
+    accessToken: string,
+    timeoutMs: number,
+  ): Promise<void> {
+    const encodedUrn = encodeURIComponent(mediaUrn);
     const deadline = Date.now() + timeoutMs;
+    const resource = `${mediaType}s`;
 
     while (Date.now() < deadline) {
       await delay(3000);
       const { data } = await apiFetch<{ status: string }>(
-        `${this.LINKEDIN_API_BASE}/videos/${encodedUrn}`,
+        `${this.LINKEDIN_API_BASE}/${resource}/${encodedUrn}`,
         {
           method: 'GET',
           headers: {
@@ -260,17 +331,15 @@ export class LinkedinMediaService {
           },
         },
       );
-
       if (data.status === 'AVAILABLE') return;
       if (data.status === 'PROCESSING_FAILED') {
         throw new InternalServerErrorException(
-          'LinkedIn video processing failed',
+          `LinkedIn ${mediaType} processing failed`,
         );
       }
     }
-
     throw new InternalServerErrorException(
-      'Timed out waiting for LinkedIn video to become available',
+      `Timed out waiting for LinkedIn ${mediaType} to become available`,
     );
   }
 }

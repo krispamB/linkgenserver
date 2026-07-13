@@ -10,6 +10,7 @@ import {
 import { WorkflowQueue } from '../workflow/workflow.queue';
 import { ScheduleQueue } from '../workflow/schedule.queue';
 import {
+  MediaType,
   MediaUploadJobItem,
   MediaUploadQueue,
 } from '../workflow/media-upload.queue';
@@ -43,7 +44,15 @@ import { formatLinkedinContent } from 'src/common/HelperFn';
 import { FeatureGatingService } from '../feature-gating/feature-gating.service';
 import { readFile, unlink } from 'fs/promises';
 import { randomUUID } from 'crypto';
-import { deleteFile, getSignedUploadUrl, headFile, uploadFile } from 'src/s3';
+import {
+  deleteFile,
+  getFile,
+  getSignedUploadUrl,
+  headFile,
+  uploadFile,
+} from 'src/s3';
+import { LinkedinMediaService } from './linkedin-media.service';
+import type { DocumentContent, PollContent } from '../artifact/schemas';
 
 interface PostFilters {
   availableMonths: string[];
@@ -77,6 +86,7 @@ export class PostService {
     private readonly connectedAccountModel: Model<ConnectedAccount>,
     private readonly encryptionService: EncryptionService,
     private readonly featureGatingService: FeatureGatingService,
+    private readonly linkedinMediaService: LinkedinMediaService,
   ) {}
 
   async createPost(user: User, dto: CreatePostDto): Promise<Post> {
@@ -165,10 +175,9 @@ export class PostService {
     if (
       !artifact ||
       artifact.deletedAt ||
-      artifact.type !== ArtifactType.POST ||
+      !Object.values(ArtifactType).includes(artifact.type) ||
       !version ||
-      version.status !== VersionStatus.READY ||
-      typeof version.content?.commentary !== 'string'
+      version.status !== VersionStatus.READY
     ) {
       await this.failPost(post, 'source artifact unavailable');
       throw new BadRequestException('source artifact unavailable');
@@ -184,9 +193,51 @@ export class PostService {
       const accessToken = await this.encryptionService.decrypt(
         connectedAccount.accessToken!,
       );
+      const author = this.resolveLinkedinAuthorUrn(connectedAccount);
+      let content: IContent | undefined;
+      if (artifact.type === ArtifactType.POLL) {
+        const pollContent = version.content as unknown as PollContent;
+        const durationByDays = {
+          1: 'ONE_DAY',
+          3: 'THREE_DAYS',
+          7: 'SEVEN_DAYS',
+          14: 'FOURTEEN_DAYS',
+        } as const;
+        content = {
+          poll: {
+            question: pollContent.poll.question,
+            options: pollContent.poll.options.map((text) => ({ text })),
+            settings: {
+              duration: durationByDays[pollContent.poll.durationDays],
+              voteSelectionType: 'SINGLE_VOTE',
+              isVoterVisibleToAuthor: true,
+            },
+          },
+        };
+      } else if (artifact.type === ArtifactType.DOCUMENT) {
+        const documentContent = version.content as unknown as DocumentContent;
+        const { pdfKey, pageCount, slides } = documentContent.document;
+        if (!pdfKey || !pageCount) {
+          throw new BadRequestException('source artifact unavailable');
+        }
+        const bytes = await getFile(pdfKey);
+        const documentUrn = await this.linkedinMediaService.uploadDocument(
+          author,
+          accessToken,
+          bytes,
+          pageCount,
+        );
+        const cover = slides[0];
+        const title =
+          cover?.type === 'cover' ? cover.fields.title : 'LinkedIn document';
+        content = { media: { id: documentUrn, title } };
+      }
       const data: ILinkedInPost = {
-        author: this.resolveLinkedinAuthorUrn(connectedAccount),
-        commentary: formatLinkedinContent(version.content.commentary),
+        author,
+        ...(typeof version.content.commentary === 'string'
+          ? { commentary: formatLinkedinContent(version.content.commentary) }
+          : {}),
+        ...(content ? { content } : {}),
         visibility: 'PUBLIC',
         distribution: {
           feedDistribution: 'MAIN_FEED',
@@ -677,7 +728,7 @@ export class PostService {
           jobItems.push({
             mediaId,
             r2Key,
-            mediaType: isVideo ? 'VIDEO' : 'IMAGE',
+            mediaType: isVideo ? MediaType.VIDEO : MediaType.IMAGE,
           });
           newMediaItems.push({
             id: mediaId,
@@ -860,7 +911,7 @@ export class PostService {
       jobItems.push({
         mediaId: entry.id,
         r2Key,
-        mediaType: entry.type,
+        mediaType: entry.type === 'VIDEO' ? MediaType.VIDEO : MediaType.IMAGE,
       });
     }
 

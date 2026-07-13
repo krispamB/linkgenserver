@@ -9,7 +9,13 @@ import {
 export interface MediaUploadJobItem {
   mediaId: string;
   r2Key: string;
-  mediaType: 'IMAGE' | 'VIDEO';
+  mediaType: MediaType.IMAGE | MediaType.VIDEO;
+}
+
+export enum MediaType {
+  IMAGE = 'IMAGE',
+  VIDEO = 'VIDEO',
+  DOCUMENT = 'DOCUMENT',
 }
 
 export interface MediaUploadJobData {

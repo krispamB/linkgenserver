@@ -58,6 +58,7 @@ jest.mock(
     deleteFile: jest.fn(),
     getSignedUploadUrl: jest.fn(),
     headFile: jest.fn(),
+    getFile: jest.fn(),
   }),
   { virtual: true },
 );
@@ -68,6 +69,7 @@ jest.mock('fs/promises', () => ({
 
 import { PostService } from './post.service';
 import { deleteFile, getSignedUploadUrl, headFile, uploadFile } from 'src/s3';
+import { getFile } from 'src/s3';
 import { unlink } from 'fs/promises';
 import { apiFetch } from 'src/common/HelperFn/apiFetch.helper';
 import { formatLinkedinContent } from 'src/common/HelperFn';
@@ -628,6 +630,7 @@ describe('PostService artifact publishing', () => {
       incrementScheduledPostUsage: jest.fn().mockResolvedValue(undefined),
       assertCompanyPagesAccess: jest.fn().mockResolvedValue(undefined),
       decrypt: jest.fn().mockResolvedValue('token'),
+      uploadDocument: jest.fn().mockResolvedValue('urn:li:document:1'),
     };
     Object.assign(service as any, {
       postModel: Object.assign(mocks.postModel, {
@@ -642,6 +645,7 @@ describe('PostService artifact publishing', () => {
         assertCompanyPagesAccess: mocks.assertCompanyPagesAccess,
       },
       encryptionService: { decrypt: mocks.decrypt },
+      linkedinMediaService: { uploadDocument: mocks.uploadDocument },
       LINKEDIN_API_BASE: 'https://api.linkedin.com/rest',
       logger: { error: jest.fn() },
     });
@@ -726,6 +730,68 @@ describe('PostService artifact publishing', () => {
       });
       expect(JSON.parse(request.body).content).toBeUndefined();
       expect(fixtures.post.status).toBe('PUBLISHED');
+    });
+
+    it('should publish inline poll content without uploading media when the artifact is a POLL', async () => {
+      const { service, mocks, fixtures } = makeService();
+      fixtures.artifact.type = 'POLL';
+      fixtures.artifact.versions[0].content = {
+        commentary: 'Choose one',
+        poll: {
+          question: 'Best day?',
+          options: ['Monday', 'Friday'],
+          durationDays: 7,
+        },
+      };
+
+      await service.publishPost(fixtures.postId.toString());
+
+      const body = JSON.parse((apiFetch as jest.Mock).mock.calls[0][1].body);
+      expect(body.content).toEqual({
+        poll: {
+          question: 'Best day?',
+          options: [{ text: 'Monday' }, { text: 'Friday' }],
+          settings: {
+            duration: 'SEVEN_DAYS',
+            voteSelectionType: 'SINGLE_VOTE',
+            isVoterVisibleToAuthor: true,
+          },
+        },
+      });
+      expect(mocks.uploadDocument).not.toHaveBeenCalled();
+    });
+
+    it('should upload pinned PDF bytes and publish the returned urn when the artifact is a DOCUMENT', async () => {
+      const { service, mocks, fixtures } = makeService();
+      const pdf = Buffer.from('rendered-pdf');
+      fixtures.artifact.type = 'DOCUMENT';
+      fixtures.artifact.versions[0].content = {
+        commentary: 'Swipe through',
+        document: {
+          templateId: 'bold',
+          slides: [
+            { type: 'cover', fields: { title: 'First slide' } },
+            { type: 'cta', fields: { headline: 'Go', action: 'Try it' } },
+          ],
+          pdfKey: 'artifacts/deck/1/document.pdf',
+          pageCount: 8,
+        },
+      };
+      (getFile as jest.Mock).mockResolvedValue(pdf);
+
+      await service.publishPost(fixtures.postId.toString());
+
+      expect(getFile).toHaveBeenCalledWith('artifacts/deck/1/document.pdf');
+      expect(mocks.uploadDocument).toHaveBeenCalledWith(
+        'urn:li:person:person-1',
+        'token',
+        pdf,
+        8,
+      );
+      const postCall = (apiFetch as jest.Mock).mock.calls.at(-1);
+      expect(JSON.parse(postCall[1].body).content).toEqual({
+        media: { id: 'urn:li:document:1', title: 'First slide' },
+      });
     });
 
     it('should fail safely when the pinned version is unavailable', async () => {
