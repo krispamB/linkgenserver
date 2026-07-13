@@ -6,11 +6,6 @@ export enum WorkflowStep {
   PERSIST_VERSION = 'PERSIST_VERSION',
 }
 
-export enum ContentType {
-  QUICK_POST_LINKEDIN = 'quickPostLinkedin',
-  INSIGHT_POST_LINKEDIN = 'insightPostLinkedin',
-}
-
 export const QUEUE_NAME = 'workflow';
 export const SCHEDULE_QUEUE_NAME = 'post-schedule';
 export const LINKEDIN_AVATAR_REFRESH_QUEUE_NAME = 'linkedin-avatar-refresh';

@@ -62,25 +62,24 @@ The application runs as **two separate processes**:
 
 The workflow system in `src/workflow/` is a pipeline executor:
 
-- **`WorkflowDefinition`** (`engine/workflow.types.ts`) is just an ordered list of `WorkflowStep` enum values
-- **`WorkflowRegistry`** (`engine/workflow.registory.ts`) maps workflow names to their definitions
-- **`runWorkflow`** (`engine/workflow.engine.ts`) iterates the steps, calling each step handler with a shared `state` object that accumulates results across steps
-- **Step handlers** live in `src/workflow/steps/` and receive `(state, job, ctx)` where `ctx` contains injected services (`agentService`, `logger`)
-- The two concrete workflows are `quickPostLinkedin` and `insightPostLinkedin` (in `workflows/`)
+- **`buildWorkflow`** (`engine/workflow.builder.ts`) composes an ordered `WorkflowStep` list from artifact type, run kind, and the `withResearch` toggle
+- **`runWorkflow`** (`engine/workflow.engine.ts`) iterates those steps and merges each handler's patch into shared typed run state
+- **Step handlers** live in `src/workflow/steps/` and receive `(state, ctx)`, where `ctx` exposes narrow roles for the agent runner, artifact writer, renderer, credit meter, run record, logger, and event emitter
+- Workflows are named `artifact:<type>` and contain `RESOLVE_INPUT`, optional `RESEARCH`, `GENERATE`, optional `RENDER_PDF`, and `PERSIST_VERSION`
 
 Queue producers (`WorkflowQueue`, `ScheduleQueue`, etc.) live in `src/workflow/` and are imported by feature modules. The worker consumes from the same queues.
 
 ### LLM abstraction
 
 `src/llm/` provides a strategy pattern:
-- `LLMService.generateCompletions(provider, messages, options?)` dispatches to the correct strategy
+- `LLMService.complete(...)` and `completeWithTools(...)` dispatch through the configured provider strategy
 - Currently only `LLMProvider.OPENROUTER` is implemented (`strategies/openrouter.strategy.ts`)
 - Prompts are defined as named constants in `src/agent/prompts/`
-- LLM responses are parsed with `ResponseParserService` which extracts typed objects from raw text
+- `AgentRunnerService` owns research tool calls and structured artifact generation; `ResponseParserService` validates generated content against the per-artifact Zod schema
 
 ### Feature gating
 
-`src/feature-gating/FeatureGatingService` enforces tier-based limits on three features: `ai_drafts`, `scheduled_posts`, and `connected_accounts`. It resolves the user's active tier by checking `Subscription` (Paddle-managed) with fallback to the default `Tier`. Usage is tracked in the `Usage` collection keyed by `(user_id, feature, periodStart)`.
+`src/feature-gating/FeatureGatingService` enforces tier-based limits on `credits`, `scheduled_posts`, and `connected_accounts`. It resolves the user's active tier by checking `Subscription` (Paddle-managed) with fallback to the default `Tier`. Usage is tracked in the `Usage` collection keyed by `(user_id, feature, periodStart)`, and artifact runs settle LLM and web-search cost through `CreditMeterService`.
 
 `SubscriptionAccessGuard` runs on protected routes to attach `entitlementTier`, `entitlementSource`, and `subscriptionStatus` to the request object.
 
@@ -95,7 +94,9 @@ Queue producers (`WorkflowQueue`, `ScheduleQueue`, etc.) live in `src/workflow/`
 Key schemas in `src/database/schemas/`:
 - `User` — references a `Tier`
 - `ConnectedAccount` — stores encrypted LinkedIn tokens; supports `PERSON` and `ORGANIZATION` account types with an `impersonatorUrn` linking org accounts back to the personal account
-- `PostDraft` — the draft post, with `status` (`DRAFT` | `SCHEDULED` | `PUBLISHED`) and a `connectedAccount` reference
+- `Artifact` — owns versioned generated content for `POST`, `POLL`, and `DOCUMENT` artifacts
+- `WorkflowRun` — records asynchronous artifact generation/refinement progress, research context, and credits used
+- `Post` — pins one or more artifact versions to a connected account and moves through `SCHEDULED`, `PUBLISHED`, or `FAILED`
 - `Subscription` — Paddle subscription state; `currentPeriodStart`/`currentPeriodEnd` drives usage period calculation
 - `Tier` — holds feature `limits` map (keyed by `FeatureKey`); one tier has `isDefault: true`
 - `Usage` — metered usage counters per `(user_id, feature, periodStart)`
@@ -117,9 +118,10 @@ Copy `.env.example` and fill in real values. Required keys not in the example:
 - `ENCRYPTION_KEY` — arbitrary secret used to derive the AES-256 key for LinkedIn tokens
 - `LINKEDIN_CLIENT_ID`, `LINKEDIN_CLIENT_SECRET`, `LINKEDIN_REDIRECT_URI`
 - `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_CALLBACK_URL`
-- `GOOGLE_API_KEY` — YouTube Data API key (used by `AgentService`)
 - `APIFY_API_TOKEN` — for web research via `ActorsService`
 - `OPENROUTER_API_KEY` — LLM calls
+- `TAVILY_API_KEY` — autonomous web research tool
+- `GENERATION_MODEL`, `RESEARCH_MODEL` — OpenRouter model identifiers used by `AgentRunnerService`
 
 ## Worktrees
 
@@ -198,7 +200,7 @@ Use `jest.mock` with `{ virtual: true }` for all module-path mocks (required for
 
 ```typescript
 jest.mock('src/database/schemas', () => ({
-  PostDraftStatus: { DRAFT: 'DRAFT', SCHEDULED: 'SCHEDULED', PUBLISHED: 'PUBLISHED' },
+  PostStatus: { SCHEDULED: 'SCHEDULED', PUBLISHED: 'PUBLISHED', FAILED: 'FAILED' },
   AccountProvider: { LINKEDIN: 'LINKEDIN' },
 }), { virtual: true });
 ```

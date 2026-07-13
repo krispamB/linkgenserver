@@ -3,7 +3,6 @@ import { HttpStatus } from '@nestjs/common';
 jest.mock('./post.service', () => ({
   PostService: class PostService {},
 }));
-jest.mock('../agent/dto', () => ({ InputDto: class InputDto {} }));
 jest.mock('../common/guards', () => ({
   JwtAuthGuard: class JwtAuthGuard {},
   SubscriptionAccessGuard: class SubscriptionAccessGuard {},

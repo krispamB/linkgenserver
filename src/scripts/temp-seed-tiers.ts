@@ -21,7 +21,6 @@ type TierSeed = {
   isDefault: boolean;
   isActive: boolean;
   limits: {
-    ai_drafts: number;
     connected_accounts: number;
     scheduled_posts: number;
   };
@@ -40,17 +39,11 @@ const tierSeeds: TierSeed[] = [
     isDefault: true,
     isActive: true,
     limits: {
-      ai_drafts: 2,
       connected_accounts: 1,
       scheduled_posts: 1,
     },
     metadata: {
-      features: [
-        '1 connected account',
-        '2 AI posts per month',
-        '1 scheduled post',
-        '30 day history',
-      ],
+      features: ['1 connected account', '1 scheduled post', '30 day history'],
     },
   },
   {
@@ -62,17 +55,11 @@ const tierSeeds: TierSeed[] = [
     isDefault: false,
     isActive: true,
     limits: {
-      ai_drafts: 10,
       connected_accounts: 1,
       scheduled_posts: 5,
     },
     metadata: {
-      features: [
-        '1 connected account',
-        '10 AI posts per month',
-        '5 scheduled posts',
-        '90 day history',
-      ],
+      features: ['1 connected account', '5 scheduled posts', '90 day history'],
     },
   },
   {
@@ -84,14 +71,12 @@ const tierSeeds: TierSeed[] = [
     isDefault: false,
     isActive: true,
     limits: {
-      ai_drafts: 30,
       connected_accounts: 1,
       scheduled_posts: 15,
     },
     metadata: {
       features: [
         '1 connected account',
-        '30 AI posts per month',
         '15 scheduled posts',
         '1 year post history',
       ],
@@ -106,14 +91,12 @@ const tierSeeds: TierSeed[] = [
     isDefault: false,
     isActive: true,
     limits: {
-      ai_drafts: 300,
       connected_accounts: 5,
       scheduled_posts: -1,
     },
     metadata: {
       features: [
         '10 connected accounts',
-        '350 AI posts per month',
         'unlimited scheduled posts',
         'unlimited post history',
       ],

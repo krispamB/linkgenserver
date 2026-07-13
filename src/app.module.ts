@@ -22,13 +22,11 @@ import { PostModule } from './post/post.module';
 import { EncryptionModule } from './encryption/encryption.module';
 import { SubscriptionModule } from './subscription/subscription.module';
 import { PaymentModule } from './payment/payment.module';
-import { YoutubeTranscriptModule } from './youtube-transcript';
 import { TierModule } from './tier/tier.module';
 import { MailModule } from './mail';
 import { FeedbackModule } from './feedback/feedback.module';
 import { OnboardingModule } from './onboarding';
 import { DiagnosticsModule } from './diagnostics/diagnostics.module';
-import { MarkModule } from './mark';
 import { ArtifactModule } from './artifact';
 import { CarouselModule } from './carousel';
 
@@ -54,10 +52,8 @@ import { CarouselModule } from './carousel';
     UserModule,
     PostModule,
     EncryptionModule,
-    YoutubeTranscriptModule,
     OnboardingModule,
     DiagnosticsModule,
-    MarkModule,
     ArtifactModule,
     CarouselModule,
   ],

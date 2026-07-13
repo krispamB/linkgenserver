@@ -2,7 +2,6 @@ import { Job, Worker } from 'bullmq';
 import {
   EMAIL_QUEUE_NAME,
   LINKEDIN_AVATAR_REFRESH_QUEUE_NAME,
-  MEDIA_UPLOAD_QUEUE_NAME,
   QUEUE_NAME,
   SCHEDULE_QUEUE_NAME,
 } from '../workflow.constants';
@@ -18,12 +17,6 @@ import { AuthService } from '../../auth/auth.service';
 import { MailService } from '../../mail';
 import { EmailQueue } from '../email.queue';
 import { processEmailJob } from './email.worker.handler';
-import { LinkedinMediaService } from '../../post/linkedin-media.service';
-import { MediaUploadJobData } from '../media-upload.queue';
-import {
-  handleMediaUploadJobExhausted,
-  processMediaUploadJob,
-} from './media-upload.worker.handler';
 import { ArtifactRunProcessor } from './artifact-run.worker.handler';
 import { AgentRunnerService } from '../../agent/agent-runner.service';
 import { ArtifactService } from '../../artifact/artifact.service';
@@ -45,7 +38,6 @@ async function bootstrapWorker() {
   const authService = app.get(AuthService);
   const mailService = app.get(MailService);
   const emailQueue = app.get(EmailQueue);
-  const linkedinMediaService = app.get(LinkedinMediaService);
   const userModel = app.get<Model<User>>(getModelToken(User.name));
 
   logger.log('NestJs context ready');
@@ -165,37 +157,5 @@ async function bootstrapWorker() {
       },
     },
   );
-
-  const mediaUploadWorker = new Worker(
-    MEDIA_UPLOAD_QUEUE_NAME,
-    async (job: Job<MediaUploadJobData>) => {
-      try {
-        await processMediaUploadJob(job, logger, linkedinMediaService);
-      } catch (error) {
-        logger.error(error);
-        throw error;
-      }
-    },
-    {
-      connection: {
-        url: process.env.REDIS_URL!,
-        maxRetriesPerRequest: null,
-        enableReadyCheck: false,
-      },
-    },
-  );
-
-  mediaUploadWorker.on('failed', (job, error) => {
-    if (!job) return;
-    if (job.attemptsMade >= (job.opts.attempts ?? 1)) {
-      handleMediaUploadJobExhausted(job, logger, linkedinMediaService).catch(
-        (err) => logger.error(err),
-      );
-    } else {
-      logger.warn(
-        `Media upload job ${job.id} failed (attempt ${job.attemptsMade}/${job.opts.attempts ?? 1}): ${error.message}`,
-      );
-    }
-  });
 }
 bootstrapWorker();

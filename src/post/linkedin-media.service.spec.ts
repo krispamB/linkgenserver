@@ -1,12 +1,4 @@
 jest.mock(
-  'src/database/schemas',
-  () => ({
-    ConnectedAccount: { name: 'ConnectedAccount' },
-    PostDraft: { name: 'PostDraft' },
-  }),
-  { virtual: true },
-);
-jest.mock(
   'src/common/HelperFn/apiFetch.helper',
   () => ({
     apiFetch: jest.fn(),
@@ -27,174 +19,17 @@ jest.mock(
   () => ({ delay: jest.fn().mockResolvedValue(undefined) }),
   { virtual: true },
 );
-jest.mock(
-  'src/encryption/encryption.service',
-  () => ({ EncryptionService: class EncryptionService {} }),
-  { virtual: true },
-);
-jest.mock(
-  'src/s3',
-  () => ({
-    getFile: jest.fn(),
-    deleteFile: jest.fn(),
-  }),
-  { virtual: true },
-);
-
-import { Types } from 'mongoose';
 import { LinkedinMediaService } from './linkedin-media.service';
 import { apiFetch } from 'src/common/HelperFn/apiFetch.helper';
-import { deleteFile, getFile } from 'src/s3';
-
-const makeService = () => {
-  (deleteFile as jest.Mock).mockResolvedValue(undefined);
-  const postDraftModel = {
-    findById: jest.fn(),
-    exists: jest.fn(),
-    updateOne: jest.fn().mockResolvedValue({ matchedCount: 1 }),
-  };
-  const connectedAccountModel = {
-    findById: jest.fn(),
-  };
-  const encryptionService = {
-    decrypt: jest.fn().mockResolvedValue('token'),
-  };
-  const service = new LinkedinMediaService(
-    postDraftModel as any,
-    connectedAccountModel as any,
-    encryptionService as any,
-  );
-
-  const postId = new Types.ObjectId().toString();
-  const connectedAccountId = new Types.ObjectId().toString();
-  const fixtures = {
-    jobData: {
-      postId,
-      connectedAccountId,
-      ownerUrn: 'urn:li:person:abc',
-      items: [
-        {
-          mediaId: 'media-1',
-          r2Key: `media-uploads/${postId}/media-1`,
-          mediaType: 'IMAGE' as const,
-        },
-      ],
-    },
-    post: { _id: postId, media: [{ id: 'media-1', status: 'UPLOADING' }] },
-    connectedAccount: { accessToken: 'encrypted-token' },
-  };
-
-  return {
-    service,
-    mocks: { postDraftModel, connectedAccountModel, encryptionService },
-    fixtures,
-  };
-};
 
 let service: LinkedinMediaService;
-let mocks: ReturnType<typeof makeService>['mocks'];
-let fixtures: ReturnType<typeof makeService>['fixtures'];
 
 beforeEach(() => {
   jest.clearAllMocks();
-  ({ service, mocks, fixtures } = makeService());
+  service = new LinkedinMediaService();
 });
 
 describe('LinkedinMediaService', () => {
-  describe('processMediaUpload', () => {
-    it('should upload pending media, mark it READY, and delete the R2 object when the job runs', async () => {
-      mocks.postDraftModel.findById.mockResolvedValue(fixtures.post);
-      mocks.connectedAccountModel.findById.mockResolvedValue(
-        fixtures.connectedAccount,
-      );
-      mocks.postDraftModel.exists.mockResolvedValue({ _id: 'x' });
-      (getFile as jest.Mock).mockResolvedValue(Buffer.from('image-bytes'));
-      const uploadImage = jest
-        .spyOn(service, 'uploadImage')
-        .mockResolvedValue('urn:li:image:1');
-
-      await service.processMediaUpload(fixtures.jobData);
-
-      expect(getFile).toHaveBeenCalledWith(fixtures.jobData.items[0].r2Key);
-      expect(uploadImage).toHaveBeenCalledWith(
-        'urn:li:person:abc',
-        'token',
-        Buffer.from('image-bytes'),
-      );
-      expect(mocks.postDraftModel.updateOne).toHaveBeenCalledWith(
-        { _id: fixtures.jobData.postId, 'media.id': 'media-1' },
-        { $set: { 'media.$.id': 'urn:li:image:1', 'media.$.status': 'READY' } },
-      );
-      expect(deleteFile).toHaveBeenCalledWith(fixtures.jobData.items[0].r2Key);
-    });
-
-    it('should use the video upload path when mediaType is VIDEO', async () => {
-      fixtures.jobData.items[0].mediaType = 'VIDEO' as any;
-      mocks.postDraftModel.findById.mockResolvedValue(fixtures.post);
-      mocks.connectedAccountModel.findById.mockResolvedValue(
-        fixtures.connectedAccount,
-      );
-      mocks.postDraftModel.exists.mockResolvedValue({ _id: 'x' });
-      (getFile as jest.Mock).mockResolvedValue(Buffer.from('video-bytes'));
-      const uploadVideo = jest
-        .spyOn(service, 'uploadVideo')
-        .mockResolvedValue('urn:li:video:1');
-
-      await service.processMediaUpload(fixtures.jobData);
-
-      expect(uploadVideo).toHaveBeenCalledTimes(1);
-      expect(mocks.postDraftModel.updateOne).toHaveBeenCalledWith(
-        { _id: fixtures.jobData.postId, 'media.id': 'media-1' },
-        { $set: { 'media.$.id': 'urn:li:video:1', 'media.$.status': 'READY' } },
-      );
-    });
-
-    it('should skip items whose media entry no longer exists when retrying', async () => {
-      mocks.postDraftModel.findById.mockResolvedValue(fixtures.post);
-      mocks.connectedAccountModel.findById.mockResolvedValue(
-        fixtures.connectedAccount,
-      );
-      mocks.postDraftModel.exists.mockResolvedValue(null);
-
-      await service.processMediaUpload(fixtures.jobData);
-
-      expect(getFile).not.toHaveBeenCalled();
-      expect(mocks.postDraftModel.updateOne).not.toHaveBeenCalled();
-    });
-
-    it('should discard the job and delete R2 objects when the post is gone', async () => {
-      mocks.postDraftModel.findById.mockResolvedValue(null);
-
-      await service.processMediaUpload(fixtures.jobData);
-
-      expect(deleteFile).toHaveBeenCalledWith(fixtures.jobData.items[0].r2Key);
-      expect(mocks.connectedAccountModel.findById).not.toHaveBeenCalled();
-    });
-
-    it('should throw when the connected account has no access token', async () => {
-      mocks.postDraftModel.findById.mockResolvedValue(fixtures.post);
-      mocks.connectedAccountModel.findById.mockResolvedValue({
-        accessToken: null,
-      });
-
-      await expect(
-        service.processMediaUpload(fixtures.jobData),
-      ).rejects.toThrow('missing or has no access token');
-    });
-  });
-
-  describe('handleMediaUploadFailure', () => {
-    it('should mark items FAILED and delete R2 objects when retries are exhausted', async () => {
-      await service.handleMediaUploadFailure(fixtures.jobData);
-
-      expect(mocks.postDraftModel.updateOne).toHaveBeenCalledWith(
-        { _id: fixtures.jobData.postId, 'media.id': 'media-1' },
-        { $set: { 'media.$.status': 'FAILED' } },
-      );
-      expect(deleteFile).toHaveBeenCalledWith(fixtures.jobData.items[0].r2Key);
-    });
-  });
-
   describe('uploadImage', () => {
     it('should initialize the upload, PUT the buffer, and return the image urn when successful', async () => {
       const mockedApiFetch = apiFetch as jest.Mock;

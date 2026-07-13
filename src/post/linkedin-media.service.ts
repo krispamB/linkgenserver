@@ -2,112 +2,14 @@ import {
   BadRequestException,
   Injectable,
   InternalServerErrorException,
-  Logger,
 } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
-import { ConnectedAccount, PostDraft } from 'src/database/schemas';
-import { EncryptionService } from 'src/encryption/encryption.service';
 import { ApiError, apiFetch } from 'src/common/HelperFn/apiFetch.helper';
 import { delay } from 'src/common/HelperFn';
-import { deleteFile, getFile } from 'src/s3';
 import { IVideoInitResponse } from './post.interface';
-import {
-  MediaType,
-  MediaUploadJobData,
-  MediaUploadJobItem,
-} from '../workflow/media-upload.queue';
 
 @Injectable()
 export class LinkedinMediaService {
-  private readonly logger = new Logger(LinkedinMediaService.name);
   private readonly LINKEDIN_API_BASE = 'https://api.linkedin.com/rest';
-
-  constructor(
-    @InjectModel(PostDraft.name)
-    private readonly postDraftModel: Model<PostDraft>,
-    @InjectModel(ConnectedAccount.name)
-    private readonly connectedAccountModel: Model<ConnectedAccount>,
-    private readonly encryptionService: EncryptionService,
-  ) {}
-
-  async processMediaUpload(data: MediaUploadJobData): Promise<void> {
-    const { postId, connectedAccountId, ownerUrn, items } = data;
-
-    const post = await this.postDraftModel.findById(postId);
-    if (!post) {
-      this.logger.warn(
-        `Post ${postId} no longer exists; discarding media upload job`,
-      );
-      await this.deleteR2Objects(items);
-      return;
-    }
-
-    const connectedAccount =
-      await this.connectedAccountModel.findById(connectedAccountId);
-    if (!connectedAccount?.accessToken) {
-      throw new Error(
-        `Connected account ${connectedAccountId} is missing or has no access token`,
-      );
-    }
-
-    const accessToken = await this.encryptionService.decrypt(
-      connectedAccount.accessToken,
-    );
-
-    for (const item of items) {
-      const pending = await this.postDraftModel.exists({
-        _id: postId,
-        'media.id': item.mediaId,
-      });
-      if (!pending) continue;
-
-      const fileBuffer = await getFile(item.r2Key);
-      const urn =
-        item.mediaType === MediaType.VIDEO
-          ? await this.uploadVideo(ownerUrn, accessToken, fileBuffer)
-          : await this.uploadImage(ownerUrn, accessToken, fileBuffer);
-
-      await this.postDraftModel.updateOne(
-        { _id: postId, 'media.id': item.mediaId },
-        { $set: { 'media.$.id': urn, 'media.$.status': 'READY' } },
-      );
-
-      await deleteFile(item.r2Key).catch((error) =>
-        this.logger.warn(
-          `Failed to delete R2 object ${item.r2Key}: ${error instanceof Error ? error.message : String(error)}`,
-        ),
-      );
-    }
-  }
-
-  async handleMediaUploadFailure(data: MediaUploadJobData): Promise<void> {
-    for (const item of data.items) {
-      await this.postDraftModel
-        .updateOne(
-          { _id: data.postId, 'media.id': item.mediaId },
-          { $set: { 'media.$.status': 'FAILED' } },
-        )
-        .catch((error) =>
-          this.logger.error(
-            `Failed to mark media ${item.mediaId} as FAILED: ${error instanceof Error ? error.message : String(error)}`,
-          ),
-        );
-    }
-    await this.deleteR2Objects(data.items);
-  }
-
-  private async deleteR2Objects(items: MediaUploadJobItem[]): Promise<void> {
-    await Promise.allSettled(
-      items.map((item) =>
-        deleteFile(item.r2Key).catch((error) =>
-          this.logger.warn(
-            `Failed to delete R2 object ${item.r2Key}: ${error instanceof Error ? error.message : String(error)}`,
-          ),
-        ),
-      ),
-    );
-  }
 
   async uploadImage(
     ownerUrn: string,

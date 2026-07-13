@@ -6,33 +6,17 @@ import {
   HttpCode,
   HttpStatus,
   Param,
-  Patch,
   Post,
-  Put,
   Query,
-  UploadedFiles,
   UseGuards,
-  UseInterceptors,
 } from '@nestjs/common';
 import { PostService } from './post.service';
-import { InputDto } from '../agent/dto';
-import {
-  UpdatePostDto,
-  SchedulePostDto,
-  InitiateMediaUploadDto,
-  CompleteMediaUploadDto,
-  CreatePostDto,
-  GetPostsQueryDto,
-} from './dto';
+import { SchedulePostDto, CreatePostDto, GetPostsQueryDto } from './dto';
 import { SubscriptionAccessGuard } from '../common/guards';
 import { ClerkAuthGuard } from '../auth/clerk';
 import { IAppResponse } from 'src/common/interfaces';
 import { GetUser } from 'src/common/decorators';
 import { User } from 'src/database/schemas';
-import { FilesInterceptor } from '@nestjs/platform-express';
-import { diskStorage } from 'multer';
-import { tmpdir } from 'os';
-import { extname } from 'path';
 import type { GetPostsResult } from './post.service';
 
 @UseGuards(ClerkAuthGuard)
@@ -51,76 +35,6 @@ export class PostController {
       statusCode: HttpStatus.CREATED,
       message: 'Post created successfully',
       data: await this.postService.createPost(user, dto),
-    };
-  }
-
-  @HttpCode(HttpStatus.CREATED)
-  @UseGuards(SubscriptionAccessGuard)
-  @Post(':id/draft')
-  async createDraft(
-    @GetUser() user: User,
-    @Param('id') accountId: string,
-    @Body() dto: InputDto,
-  ): Promise<IAppResponse> {
-    return {
-      statusCode: HttpStatus.CREATED,
-      message: 'Draft created successfully',
-      data: await this.postService.createDraft(user, accountId, dto),
-    };
-  }
-
-  @HttpCode(HttpStatus.ACCEPTED)
-  @Put(':id/media')
-  @UseInterceptors(
-    FilesInterceptor('files', 20, {
-      storage: diskStorage({
-        destination: tmpdir(),
-        filename: (_req, file, cb) =>
-          cb(
-            null,
-            `${Date.now()}-${Math.round(Math.random() * 1e9)}${extname(file.originalname)}`,
-          ),
-      }),
-      limits: { fileSize: 200 * 1024 * 1024 },
-    }),
-  )
-  async uploadMedia(
-    @GetUser() user: User,
-    @Param('id') id: string,
-    @UploadedFiles() files: Express.Multer.File[],
-  ): Promise<IAppResponse> {
-    return {
-      statusCode: HttpStatus.ACCEPTED,
-      message: 'Media upload started',
-      data: await this.postService.addLinkedinMedia(user, id, files),
-    };
-  }
-
-  @HttpCode(HttpStatus.CREATED)
-  @Post(':id/media/uploads')
-  async initiateMediaUpload(
-    @GetUser() user: User,
-    @Param('id') id: string,
-    @Body() dto: InitiateMediaUploadDto,
-  ): Promise<IAppResponse> {
-    return {
-      statusCode: HttpStatus.CREATED,
-      message: 'Upload slots created',
-      data: await this.postService.initiateMediaUpload(user, id, dto),
-    };
-  }
-
-  @HttpCode(HttpStatus.ACCEPTED)
-  @Post(':id/media/uploads/complete')
-  async completeMediaUpload(
-    @GetUser() user: User,
-    @Param('id') id: string,
-    @Body() dto: CompleteMediaUploadDto,
-  ): Promise<IAppResponse> {
-    return {
-      statusCode: HttpStatus.ACCEPTED,
-      message: 'Media upload started',
-      data: await this.postService.completeMediaUpload(user, id, dto),
     };
   }
 
@@ -151,15 +65,6 @@ export class PostController {
     };
   }
 
-  @Get(':id/status')
-  async getStatus(@Param('id') id: string): Promise<IAppResponse> {
-    return {
-      statusCode: HttpStatus.OK,
-      message: 'Draft status retrieved successfully',
-      data: await this.postService.getStatus(id),
-    };
-  }
-
   @Get()
   async getPosts(
     @GetUser() user: User,
@@ -178,19 +83,6 @@ export class PostController {
       message: 'Posts retrieved successfully',
       data: result.data,
       filters: result.filters,
-    };
-  }
-
-  @Patch(':id')
-  async updateContent(
-    @GetUser() user: User,
-    @Param('id') id: string,
-    @Body() dto: UpdatePostDto,
-  ): Promise<IAppResponse> {
-    return {
-      statusCode: HttpStatus.OK,
-      message: 'Post content updated successfully',
-      data: await this.postService.updateContent(user, id, dto),
     };
   }
 

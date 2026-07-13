@@ -2,7 +2,6 @@ import { Injectable, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { Queue } from 'bullmq';
 import { ConfigService } from '@nestjs/config';
 import { QUEUE_NAME } from './workflow.constants';
-import { IJobData } from './workflow.interface';
 import type { BuildInput } from './engine/workflow.types';
 
 @Injectable()
@@ -20,14 +19,6 @@ export class WorkflowQueue implements OnModuleInit, OnModuleDestroy {
 
   async onModuleDestroy() {
     await this.queue.close();
-  }
-
-  async addWorkflowJob(workflowId: string, payload: IJobData) {
-    await this.queue.add(payload.workflowName, payload.input, {
-      jobId: workflowId,
-      removeOnComplete: true,
-      removeOnFail: false,
-    });
   }
 
   /**

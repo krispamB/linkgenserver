@@ -13,8 +13,6 @@ import {
   UserSchema,
   ConnectedAccount,
   ConnectedAccountSchema,
-  PostDraft,
-  PostDraftSchema,
   Post,
   PostSchema,
   Tier,
@@ -49,7 +47,6 @@ import {
     MongooseModule.forFeature([
       { name: User.name, schema: UserSchema },
       { name: ConnectedAccount.name, schema: ConnectedAccountSchema },
-      { name: PostDraft.name, schema: PostDraftSchema },
       { name: Post.name, schema: PostSchema },
       { name: Tier.name, schema: TierSchema },
       { name: Subscription.name, schema: SubscriptionSchema },
