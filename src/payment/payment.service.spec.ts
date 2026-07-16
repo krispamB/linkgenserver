@@ -31,6 +31,117 @@ jest.mock('../database/schemas', () => mockSchemas, { virtual: true });
 import { PaymentService } from './payment.service';
 import { SubscriptionStatus } from '../database/schemas';
 
+describe('PaymentService', () => {
+  describe('createCheckoutSession', () => {
+    const priceId = 'pri_01gm81eqze2vmmvhpjg13bfeqg';
+
+    const makeService = () => {
+      const userModel = { findById: jest.fn() };
+      const tierModel = { findOne: jest.fn() };
+      const subscriptionModel = {};
+      const billingCustomerModel = {};
+      const paddleClient = { createTransaction: jest.fn() };
+      const configService = {};
+      const redisService = { getClient: jest.fn() };
+      const featureGatingService = { getDashboardUsage: jest.fn() };
+
+      const service = new PaymentService(
+        userModel as any,
+        tierModel as any,
+        subscriptionModel as any,
+        billingCustomerModel as any,
+        paddleClient as any,
+        configService as any,
+        redisService as any,
+        featureGatingService as any,
+      );
+
+      return { service, mocks: { userModel, tierModel, paddleClient } };
+    };
+
+    let service: PaymentService;
+    let mocks: ReturnType<typeof makeService>['mocks'];
+
+    beforeEach(() => {
+      ({ service, mocks } = makeService());
+    });
+
+    it('should return a transaction ID when price belongs to an active tier', async () => {
+      const userId = new Types.ObjectId();
+      const tierId = new Types.ObjectId();
+      const user = { _id: userId, name: 'Ada Lovelace' };
+      const tier = {
+        _id: tierId,
+        name: 'Pro',
+        isActive: true,
+        paddleMonthlyPriceId: priceId,
+        paddleYearlyPriceId: 'pri_01gm81eqze2vmmvhpjg13bfeqh',
+      };
+
+      mocks.userModel.findById.mockReturnValue({
+        lean: jest.fn().mockResolvedValue(user),
+      });
+      mocks.tierModel.findOne.mockReturnValue({
+        lean: jest.fn().mockResolvedValue(tier),
+      });
+      mocks.paddleClient.createTransaction.mockResolvedValue({
+        transactionId: 'txn_01h0j589qt1nee24210teqtz57',
+      });
+
+      const result = await service.createCheckoutSession(
+        userId.toString(),
+        priceId,
+      );
+
+      expect(mocks.tierModel.findOne).toHaveBeenCalledWith({
+        isActive: true,
+        $or: [
+          { paddleMonthlyPriceId: priceId },
+          { paddleYearlyPriceId: priceId },
+        ],
+      });
+      expect(mocks.paddleClient.createTransaction).toHaveBeenCalledWith({
+        priceId,
+        userData: { userId: userId.toString(), name: 'Ada Lovelace' },
+      });
+      expect(result).toEqual({
+        transactionId: 'txn_01h0j589qt1nee24210teqtz57',
+        tier: { id: tierId.toString(), name: 'Pro' },
+        billingInterval: 'monthly',
+      });
+    });
+
+    it('should throw when the authenticated user does not exist', async () => {
+      const userId = new Types.ObjectId();
+
+      mocks.userModel.findById.mockReturnValue({
+        lean: jest.fn().mockResolvedValue(null),
+      });
+
+      await expect(
+        service.createCheckoutSession(userId.toString(), priceId),
+      ).rejects.toBeInstanceOf(NotFoundException);
+      expect(mocks.paddleClient.createTransaction).not.toHaveBeenCalled();
+    });
+
+    it('should reject a price when it does not belong to an active tier', async () => {
+      const userId = new Types.ObjectId();
+
+      mocks.userModel.findById.mockReturnValue({
+        lean: jest.fn().mockResolvedValue({ _id: userId, name: 'Ada' }),
+      });
+      mocks.tierModel.findOne.mockReturnValue({
+        lean: jest.fn().mockResolvedValue(null),
+      });
+
+      await expect(
+        service.createCheckoutSession(userId.toString(), priceId),
+      ).rejects.toThrow('priceId does not belong to an active billing tier');
+      expect(mocks.paddleClient.createTransaction).not.toHaveBeenCalled();
+    });
+  });
+});
+
 describe('PaymentService.cancelSubscription', () => {
   const makeService = () => {
     const userModel = {};

@@ -4,11 +4,12 @@ This is the client-facing API surface introduced or reworked by the artifact wor
 
 The API is versioned under `/api/v1`:
 
-| Area | Documentation |
-|---|---|
-| Artifact library and generation | [artifacts.md](./artifacts.md) |
-| Generation progress over SSE | [runs.md](./runs.md) |
-| Binding artifacts to LinkedIn posts | [posts.md](./posts.md) |
+| Area                                | Documentation                  |
+| ----------------------------------- | ------------------------------ |
+| Artifact library and generation     | [artifacts.md](./artifacts.md) |
+| Generation progress over SSE        | [runs.md](./runs.md)           |
+| Binding artifacts to LinkedIn posts | [posts.md](./posts.md)         |
+| Paddle checkout and billing         | [payment.md](./payment.md)     |
 
 ## Common conventions
 

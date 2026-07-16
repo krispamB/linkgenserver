@@ -28,6 +28,40 @@ jest.mock(
 import { PaymentController } from './payment.controller';
 
 describe('PaymentController', () => {
+  describe('createCheckout', () => {
+    const makeService = () => {
+      const paymentService = {
+        createCheckoutSession: jest.fn(),
+      };
+      const controller = new PaymentController(paymentService as any);
+
+      return { controller, mocks: { paymentService } };
+    };
+
+    let controller: PaymentController;
+    let mocks: ReturnType<typeof makeService>['mocks'];
+
+    beforeEach(() => {
+      ({ controller, mocks } = makeService());
+    });
+
+    it('should create a checkout transaction when given an authenticated user and price', async () => {
+      const checkout = { transactionId: 'txn_123' };
+      const userId = new Types.ObjectId();
+      mocks.paymentService.createCheckoutSession.mockResolvedValue(checkout);
+
+      const result = await controller.createCheckout({ _id: userId } as any, {
+        priceId: 'pri_01gm81eqze2vmmvhpjg13bfeqg',
+      });
+
+      expect(mocks.paymentService.createCheckoutSession).toHaveBeenCalledWith(
+        userId.toString(),
+        'pri_01gm81eqze2vmmvhpjg13bfeqg',
+      );
+      expect(result).toEqual(checkout);
+    });
+  });
+
   it('cancels subscription for current user', async () => {
     const paymentService = {
       cancelSubscription: jest.fn().mockResolvedValue({ ok: true }),
