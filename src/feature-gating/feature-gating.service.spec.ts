@@ -13,6 +13,8 @@ jest.mock(
     Subscription: class Subscription {},
     Tier: class Tier {},
     Usage: class Usage {},
+    Artifact: class Artifact {},
+    ArtifactType: { POST: 'POST', POLL: 'POLL', DOCUMENT: 'DOCUMENT' },
   }),
   { virtual: true },
 );
@@ -37,12 +39,16 @@ describe('FeatureGatingService', () => {
     const connectedAccountModel = {
       countDocuments: jest.fn(),
     };
+    const artifactModel = {
+      aggregate: jest.fn().mockResolvedValue([]),
+    };
 
     const service = new FeatureGatingService(
       subscriptionModel as any,
       tierModel as any,
       usageModel as any,
       connectedAccountModel as any,
+      artifactModel as any,
     );
 
     return {
@@ -52,6 +58,7 @@ describe('FeatureGatingService', () => {
         tierModel,
         usageModel,
         connectedAccountModel,
+        artifactModel,
       },
     };
   };
@@ -272,7 +279,7 @@ describe('FeatureGatingService', () => {
     expect(periodStart).toEqual(currentPeriodStart);
   });
 
-  it('returns dashboard usage summary for active subscription cycle', async () => {
+  it('returns dashboard usage and counts every artifact lifecycle state in the active cycle', async () => {
     const { service, mocks } = makeService();
     const userId = new Types.ObjectId().toString();
     const tierId = new Types.ObjectId();
@@ -318,6 +325,11 @@ describe('FeatureGatingService', () => {
         ]),
       }),
     });
+    mocks.artifactModel.aggregate.mockResolvedValue([
+      { _id: 'POST', count: 4 },
+      { _id: 'POLL', count: 2 },
+      { _id: 'DOCUMENT', count: 1 },
+    ]);
 
     const result = await service.getDashboardUsage(userId);
 
@@ -333,7 +345,21 @@ describe('FeatureGatingService', () => {
         scheduled_posts: { used: 1, limit: 3, remaining: 2 },
         credits: { used: 5000, limit: 100000, remaining: 95000 },
       },
+      artifactsCreated: { posts: 4, polls: 2, documents: 1 },
     });
+    expect(mocks.artifactModel.aggregate).toHaveBeenCalledWith([
+      {
+        $match: {
+          user: new Types.ObjectId(userId),
+          createdAt: { $gte: currentPeriodStart, $lt: currentPeriodEnd },
+        },
+      },
+      { $group: { _id: '$type', count: { $sum: 1 } } },
+    ]);
+    const artifactMatch =
+      mocks.artifactModel.aggregate.mock.calls[0][0][0].$match;
+    expect(artifactMatch).not.toHaveProperty('deletedAt');
+    expect(artifactMatch).not.toHaveProperty('versions');
     jest.useRealTimers();
   });
 
@@ -378,6 +404,11 @@ describe('FeatureGatingService', () => {
       connected_accounts: { used: 3, limit: 1, remaining: 0 },
       scheduled_posts: { used: 0, limit: 0, remaining: 0 },
       credits: { used: 7, limit: -1, remaining: -1 },
+    });
+    expect(result.artifactsCreated).toEqual({
+      posts: 0,
+      polls: 0,
+      documents: 0,
     });
     jest.useRealTimers();
   });

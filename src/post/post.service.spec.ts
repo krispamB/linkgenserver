@@ -178,6 +178,11 @@ describe('PostService.getPost', () => {
       toObject: () => ({
         _id: postId,
         user: userId,
+        connectedAccount: {
+          _id: new Types.ObjectId(),
+          displayName: 'Ada Lovelace',
+          accountType: 'PERSON',
+        },
         artifacts: [{ artifact: artifactId, version: 1 }],
       }),
     };
@@ -199,7 +204,8 @@ describe('PostService.getPost', () => {
         versions: [approvedVersion],
       }),
     };
-    const findPostById = jest.fn().mockResolvedValue(post);
+    const populate = jest.fn().mockResolvedValue(post);
+    const findPostById = jest.fn().mockReturnValue({ populate });
     const findArtifactById = jest.fn().mockResolvedValue(artifact);
     Object.assign(service as any, {
       postModel: { findById: findPostById },
@@ -212,12 +218,46 @@ describe('PostService.getPost', () => {
     );
 
     expect(findArtifactById).toHaveBeenCalledWith(artifactId);
+    expect(populate).toHaveBeenCalledWith(
+      'connectedAccount',
+      'displayName accountType',
+    );
+    expect(result.connectedAccount).toEqual(
+      expect.objectContaining({
+        displayName: 'Ada Lovelace',
+        accountType: 'PERSON',
+      }),
+    );
+    expect(result.connectedAccount).not.toHaveProperty('accessToken');
     expect(result.artifacts).toEqual([
       {
         artifact: { _id: artifactId, type: 'POST' },
         version: approvedVersion,
       },
     ]);
+  });
+
+  it('should reject a populated post that is not owned by the user', async () => {
+    const service = Object.create(PostService.prototype) as PostService;
+    const populate = jest.fn().mockResolvedValue({
+      _id: new Types.ObjectId(),
+      user: new Types.ObjectId(),
+      connectedAccount: {
+        _id: new Types.ObjectId(),
+        displayName: 'Another User',
+        accountType: 'PERSON',
+      },
+    });
+    (service as any).postModel = {
+      findById: jest.fn().mockReturnValue({ populate }),
+    };
+
+    await expect(
+      service.getPost(
+        { _id: new Types.ObjectId() } as any,
+        new Types.ObjectId().toString(),
+      ),
+    ).rejects.toBeInstanceOf(ForbiddenException);
   });
 });
 

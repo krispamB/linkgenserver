@@ -43,6 +43,13 @@ export interface GetPostsResult {
   filters: PostFilters;
 }
 
+export interface ComparePostsResult {
+  current: { month: string; count: number };
+  previous: { month: string; count: number };
+  difference: number;
+  percentageChange: number | null;
+}
+
 @Injectable()
 export class PostService {
   private readonly logger = new Logger(PostService.name);
@@ -433,7 +440,9 @@ export class PostService {
   }
 
   async getPost(user: User, postId: string) {
-    const post = await this.postModel.findById(postId);
+    const post = await this.postModel
+      .findById(postId)
+      .populate('connectedAccount', 'displayName accountType');
     if (!post) {
       throw new NotFoundException('Post not found');
     }
@@ -465,6 +474,39 @@ export class PostService {
     return {
       ...(post.toObject() as unknown as Record<string, unknown>),
       artifacts,
+    };
+  }
+
+  async comparePostsByMonth(
+    user: User,
+    currentMonth: string,
+    previousMonth: string,
+  ): Promise<ComparePostsResult> {
+    const currentRange = this.getUtcMonthRange(currentMonth);
+    const previousRange = this.getUtcMonthRange(previousMonth);
+
+    const [currentCount, previousCount] = await Promise.all([
+      this.postModel.countDocuments({
+        user: user._id,
+        createdAt: { $gte: currentRange.start, $lt: currentRange.end },
+      }),
+      this.postModel.countDocuments({
+        user: user._id,
+        createdAt: { $gte: previousRange.start, $lt: previousRange.end },
+      }),
+    ]);
+
+    const difference = currentCount - previousCount;
+    const percentageChange =
+      previousCount === 0
+        ? null
+        : Math.round((difference / previousCount) * 10_000) / 100;
+
+    return {
+      current: { month: currentMonth, count: currentCount },
+      previous: { month: previousMonth, count: previousCount },
+      difference,
+      percentageChange,
     };
   }
 
@@ -723,5 +765,19 @@ export class PostService {
     }
 
     return `urn:li:person:${profileSub}`;
+  }
+
+  private getUtcMonthRange(month: string): { start: Date; end: Date } {
+    const [year, monthNumber] = month.split('-').map(Number);
+    const start = new Date(0);
+    start.setUTCFullYear(year, monthNumber - 1, 1);
+    start.setUTCHours(0, 0, 0, 0);
+    const end = new Date(start);
+    end.setUTCMonth(end.getUTCMonth() + 1);
+
+    return {
+      start,
+      end,
+    };
   }
 }

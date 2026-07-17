@@ -24,6 +24,8 @@ const mockSchemas = {
   Subscription: class Subscription {},
   BillingCustomer: class BillingCustomer {},
   Usage: class Usage {},
+  Artifact: class Artifact {},
+  ArtifactType: { POST: 'POST', POLL: 'POLL', DOCUMENT: 'DOCUMENT' },
 };
 
 jest.mock('../database/schemas', () => mockSchemas, { virtual: true });
@@ -296,6 +298,7 @@ describe('PaymentService.getUsageSummary', () => {
         scheduled_posts: { used: 0, limit: 3, remaining: 3 },
         credits: { used: 200, limit: 2000, remaining: 1800 },
       },
+      artifactsCreated: { posts: 3, polls: 2, documents: 1 },
     };
     const featureGatingService = {
       getDashboardUsage: jest.fn().mockResolvedValue(usageSummary),

@@ -21,6 +21,8 @@ jest.mock(
     Subscription: class Subscription {},
     BillingCustomer: class BillingCustomer {},
     Usage: class Usage {},
+    Artifact: class Artifact {},
+    ArtifactType: { POST: 'POST', POLL: 'POLL', DOCUMENT: 'DOCUMENT' },
   }),
   { virtual: true },
 );
@@ -90,6 +92,7 @@ describe('PaymentController', () => {
         scheduled_posts: { used: 0, limit: 3, remaining: 3 },
         credits: { used: 200, limit: 2000, remaining: 1800 },
       },
+      artifactsCreated: { posts: 3, polls: 2, documents: 1 },
     };
     const paymentService = {
       getUsageSummary: jest.fn().mockResolvedValue(usageSummary),

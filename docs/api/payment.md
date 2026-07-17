@@ -41,3 +41,43 @@ Paddle.Checkout.open({ transactionId: response.transactionId });
 The server stores the authenticated user's ID and name as transaction custom
 data so webhook processing can safely associate the resulting subscription with
 the user.
+
+## Get dashboard usage
+
+`GET /api/v1/payment/usage`
+
+Returns plan limits and consumption for the caller's active billing cycle. It
+also reports how many artifacts of each type were created during that same
+`[billingCycle.start, billingCycle.end)` period. Artifact counts include every
+created record, including failed generations and artifacts that were later
+soft-deleted.
+
+Response:
+
+```json
+{
+  "statusCode": 200,
+  "message": "Usage summary fetched successfully",
+  "data": {
+    "tier": { "id": "6651f2c21f2db72ae60ac123", "name": "Starter" },
+    "billingCycle": {
+      "start": "2026-07-01T00:00:00.000Z",
+      "end": "2026-08-01T00:00:00.000Z",
+      "source": "default"
+    },
+    "usage": {
+      "connected_accounts": { "used": 1, "limit": 1, "remaining": 0 },
+      "scheduled_posts": { "used": 2, "limit": 3, "remaining": 1 },
+      "credits": { "used": 400, "limit": 2000, "remaining": 1600 }
+    },
+    "artifactsCreated": {
+      "posts": 8,
+      "polls": 2,
+      "documents": 1
+    }
+  }
+}
+```
+
+Artifact count keys are always present and use `0` when the cycle contains no
+artifact of that type.

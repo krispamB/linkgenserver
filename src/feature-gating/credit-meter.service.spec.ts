@@ -12,6 +12,8 @@ jest.mock(
     Subscription: class Subscription {},
     Tier: class Tier {},
     Usage: class Usage {},
+    Artifact: class Artifact {},
+    ArtifactType: { POST: 'POST', POLL: 'POLL', DOCUMENT: 'DOCUMENT' },
   }),
   { virtual: true },
 );

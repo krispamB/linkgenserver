@@ -11,7 +11,12 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { PostService } from './post.service';
-import { SchedulePostDto, CreatePostDto, GetPostsQueryDto } from './dto';
+import {
+  ComparePostsQueryDto,
+  SchedulePostDto,
+  CreatePostDto,
+  GetPostsQueryDto,
+} from './dto';
 import { SubscriptionAccessGuard } from '../common/guards';
 import { ClerkAuthGuard } from '../auth/clerk';
 import { IAppResponse } from 'src/common/interfaces';
@@ -119,6 +124,22 @@ export class PostController {
       statusCode: HttpStatus.OK,
       message: 'Image details retrieved successfully',
       data: await this.postService.getLinkedinImage(user, urn),
+    };
+  }
+
+  @Get('comparison')
+  async comparePosts(
+    @GetUser() user: User,
+    @Query() query: ComparePostsQueryDto,
+  ): Promise<IAppResponse> {
+    return {
+      statusCode: HttpStatus.OK,
+      message: 'Post comparison retrieved successfully',
+      data: await this.postService.comparePostsByMonth(
+        user,
+        query.currentMonth,
+        query.previousMonth,
+      ),
     };
   }
 

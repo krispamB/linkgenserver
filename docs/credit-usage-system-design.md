@@ -274,9 +274,11 @@ untouched). There is **no coexistence window** for `ai_drafts` — the clean wri
 deletes the draft path that gated it (#104 §12 removes `createDraft`/`createLinkedInPost`),
 so the counter has no remaining caller.
 
-`getDashboardUsage` returns the new shape: `credits` (used/limit/remaining, `-1` for
-unlimited) alongside `connected_accounts` and `scheduled_posts`; the `ai_drafts` and
-`mark_tokens` keys are dropped.
+`getDashboardUsage` returns `credits` (used/limit/remaining, `-1` for unlimited)
+alongside `connected_accounts` and `scheduled_posts`; the `ai_drafts` and
+`mark_tokens` keys are dropped. It also returns `artifactsCreated` with zero-filled
+`posts`, `polls`, and `documents` counts for artifacts created during the same billing
+cycle, including failed and subsequently soft-deleted records.
 
 ## 8. Paddle / tier-config implications
 
@@ -311,6 +313,8 @@ metered billing is a later pricing decision, not a launch blocker.
 
 - **Dashboard** — `getDashboardUsage.usage.credits = { used, limit, remaining }`
   (`remaining === -1` when unlimited), for the plan/usage screen.
+- **Artifact breakdown** — `getDashboardUsage.artifactsCreated = { posts, polls,
+documents }`, counted over the returned billing cycle.
 - **Live (SSE, #107)** — `usage.tick` events carry the per-signal credit delta and running
   `creditsUsed`, so a long research run shows a climbing credit count; the terminal
   `run.completed` / dashboard reflects the committed total. `limit === 0` lets the frontend

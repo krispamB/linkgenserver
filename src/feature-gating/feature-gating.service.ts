@@ -6,6 +6,8 @@ import {
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import {
+  Artifact,
+  ArtifactType,
   SubscriptionStatus,
   Subscription,
   Tier,
@@ -34,6 +36,8 @@ export class FeatureGatingService {
     @InjectModel(Usage.name) private readonly usageModel: Model<Usage>,
     @InjectModel('ConnectedAccount')
     private readonly connectedAccountModel: Model<any>,
+    @InjectModel(Artifact.name)
+    private readonly artifactModel: Model<Artifact>,
   ) {}
 
   async resolveEntitlementTier(userId: string): Promise<Tier> {
@@ -332,6 +336,11 @@ export class FeatureGatingService {
       scheduled_posts: { used: number; limit: number; remaining: number };
       credits: { used: number; limit: number; remaining: number };
     };
+    artifactsCreated: {
+      posts: number;
+      polls: number;
+      documents: number;
+    };
   }> {
     const entitlement = await this.resolveEntitlement(userId);
     if (!entitlement.tier) {
@@ -341,17 +350,34 @@ export class FeatureGatingService {
     const tier = entitlement.tier;
     const usagePeriod = await this.resolveUsagePeriod(userId);
 
-    const [connectedAccountsUsed, meteredUsageCounts] = await Promise.all([
-      this.connectedAccountModel.countDocuments({
-        user: new Types.ObjectId(userId),
-        isActive: true,
-      }),
-      this.getUsageCountsForFeatures(
-        userId,
-        [FEATURE_KEYS.SCHEDULED_POSTS, FEATURE_KEYS.CREDITS],
-        usagePeriod.periodStart,
-      ),
-    ]);
+    const [connectedAccountsUsed, meteredUsageCounts, artifactCounts] =
+      await Promise.all([
+        this.connectedAccountModel.countDocuments({
+          user: new Types.ObjectId(userId),
+          isActive: true,
+        }),
+        this.getUsageCountsForFeatures(
+          userId,
+          [FEATURE_KEYS.SCHEDULED_POSTS, FEATURE_KEYS.CREDITS],
+          usagePeriod.periodStart,
+        ),
+        this.artifactModel.aggregate<{ _id: ArtifactType; count: number }>([
+          {
+            $match: {
+              user: new Types.ObjectId(userId),
+              createdAt: {
+                $gte: usagePeriod.periodStart,
+                $lt: usagePeriod.periodEnd,
+              },
+            },
+          },
+          { $group: { _id: '$type', count: { $sum: 1 } } },
+        ]),
+      ]);
+
+    const artifactCountByType = new Map(
+      artifactCounts.map(({ _id, count }) => [_id, count]),
+    );
 
     const connectedAccountsLimit = this.getLimitFromTier(
       tier,
@@ -402,6 +428,11 @@ export class FeatureGatingService {
               ? -1
               : this.calculateRemaining(creditsUsed, creditsLimit),
         },
+      },
+      artifactsCreated: {
+        posts: artifactCountByType.get(ArtifactType.POST) ?? 0,
+        polls: artifactCountByType.get(ArtifactType.POLL) ?? 0,
+        documents: artifactCountByType.get(ArtifactType.DOCUMENT) ?? 0,
       },
     };
   }

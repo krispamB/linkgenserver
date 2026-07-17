@@ -150,7 +150,11 @@ Returns one owned post and resolves each artifact reference into source artifact
   "message": "Post retrieved successfully",
   "data": {
     "_id": "665f1a7f8f1e2c3d4a5b6ca0",
-    "connectedAccount": "665f1a7f8f1e2c3d4a5b6c90",
+    "connectedAccount": {
+      "_id": "665f1a7f8f1e2c3d4a5b6c90",
+      "displayName": "Ada Lovelace",
+      "accountType": "PERSON"
+    },
     "status": "PUBLISHED",
     "artifacts": [
       {
@@ -178,6 +182,40 @@ Returns one owned post and resolves each artifact reference into source artifact
 ```
 
 The resolved version is the exact version bound to the post, not necessarily the artifact's current version. For document previews and signed PDF URLs, prefer `GET /artifacts/:id?version=<version>`.
+
+The populated `connectedAccount` contains only its ID, display name, and
+`PERSON` or `ORGANIZATION` account type. Credentials and profile metadata are
+never included.
+
+## `GET /posts/comparison`
+
+Compares the number of owned Post records created in two UTC calendar months.
+All statuses are counted. The months do not need to be adjacent.
+
+### Query parameters
+
+| Parameter       | Type      | Required | Notes                                  |
+| --------------- | --------- | -------: | -------------------------------------- |
+| `currentMonth`  | `YYYY-MM` |      yes | Month displayed as the current period. |
+| `previousMonth` | `YYYY-MM` |      yes | Month used as the comparison baseline. |
+
+### Response: `200 OK`
+
+```json
+{
+  "statusCode": 200,
+  "message": "Post comparison retrieved successfully",
+  "data": {
+    "current": { "month": "2026-07", "count": 7 },
+    "previous": { "month": "2026-06", "count": 3 },
+    "difference": 4,
+    "percentageChange": 133.33
+  }
+}
+```
+
+`difference` is current minus previous. `percentageChange` is rounded to two
+decimal places and is `null` when the previous count is zero.
 
 ## `DELETE /posts/:id`
 

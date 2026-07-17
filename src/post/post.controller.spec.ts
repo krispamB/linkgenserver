@@ -95,6 +95,38 @@ describe('PostController', () => {
     });
   });
 
+  describe('comparePosts', () => {
+    it('should return month comparison metrics for the current user', async () => {
+      const comparison = {
+        current: { month: '2026-07', count: 7 },
+        previous: { month: '2026-06', count: 3 },
+        difference: 4,
+        percentageChange: 133.33,
+      };
+      const postService = {
+        comparePostsByMonth: jest.fn().mockResolvedValue(comparison),
+      } as any;
+      const controller = new PostController(postService);
+      const user = { _id: 'user-1' } as any;
+
+      const response = await controller.comparePosts(user, {
+        currentMonth: '2026-07',
+        previousMonth: '2026-06',
+      });
+
+      expect(postService.comparePostsByMonth).toHaveBeenCalledWith(
+        user,
+        '2026-07',
+        '2026-06',
+      );
+      expect(response).toEqual({
+        statusCode: HttpStatus.OK,
+        message: 'Post comparison retrieved successfully',
+        data: comparison,
+      });
+    });
+  });
+
   describe('schedulePost', () => {
     it('should pass scheduledAt when scheduling a post', async () => {
       const post = { _id: 'post-1', status: 'SCHEDULED' };
