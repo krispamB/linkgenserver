@@ -222,6 +222,41 @@ describe('ArtifactService library API', () => {
       expect(signedUrl).toHaveBeenCalledWith('artifacts/deck/1/document.pdf');
       expect(JSON.stringify(row)).not.toContain('versions');
     });
+
+    it('should skip malformed artifacts when the current version is missing', async () => {
+      const { service, artifactModel } = makeService();
+      artifactModel.aggregate.mockImplementation((pipeline: unknown[]) => ({
+        exec: jest
+          .fn()
+          .mockResolvedValue(
+            pipeline.some((stage) => '$facet' in (stage as object))
+              ? [
+                  {
+                    data: [
+                      {
+                        _id: ids.artifact,
+                        type: ArtifactType.POST,
+                        updatedAt: new Date('2026-07-02T00:00:00.000Z'),
+                        _currentVersion: null,
+                      },
+                    ],
+                    metadata: [{ total: 0 }],
+                  },
+                ]
+              : [],
+          ),
+      }));
+      artifactModel.distinct.mockResolvedValue([]);
+
+      await expect(
+        service.listArtifacts(ids.user.toString()),
+      ).resolves.toMatchObject({ data: [], page: 1, pages: 0 });
+
+      const listPipeline = artifactModel.aggregate.mock.calls[0][0];
+      expect(listPipeline).toContainEqual({
+        $match: { _currentVersion: { $ne: null } },
+      });
+    });
   });
 
   describe('updateArtifact', () => {

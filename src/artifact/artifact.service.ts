@@ -118,8 +118,12 @@ interface ArtifactListRow {
     version: number;
     status: VersionStatus;
     content: Record<string, unknown>;
-  };
+  } | null;
 }
+
+type ValidArtifactListRow = ArtifactListRow & {
+  _currentVersion: NonNullable<ArtifactListRow['_currentVersion']>;
+};
 
 interface ArtifactListAggregateResult {
   data: ArtifactListRow[];
@@ -384,6 +388,7 @@ export class ArtifactService implements ArtifactWriter {
     const listPipeline = [
       { $match: pageMatch },
       { $set: { _currentVersion: currentVersionExpression } },
+      { $match: { _currentVersion: { $ne: null } } },
       ...statusMatch,
       { $sort: { updatedAt: -1, _id: -1 } },
       {
@@ -439,7 +444,11 @@ export class ArtifactService implements ArtifactWriter {
     const aggregateResult = listResult[0] ?? { data: [], metadata: [] };
     const total = aggregateResult.metadata[0]?.total ?? 0;
     const data = await Promise.all(
-      aggregateResult.data.map((row) => this.toSummary(row)),
+      aggregateResult.data
+        .filter(
+          (row): row is ValidArtifactListRow => row._currentVersion !== null,
+        )
+        .map((row) => this.toSummary(row)),
     );
 
     const enumOrder = new Map(
@@ -636,7 +645,7 @@ export class ArtifactService implements ArtifactWriter {
     return undefined;
   }
 
-  private async toSummary(row: ArtifactListRow): Promise<ArtifactSummary> {
+  private async toSummary(row: ValidArtifactListRow): Promise<ArtifactSummary> {
     const content = row._currentVersion.content ?? {};
     const preview = await this.toPreview(row.type, content);
     return {
