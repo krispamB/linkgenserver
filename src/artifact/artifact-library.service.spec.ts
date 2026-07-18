@@ -257,9 +257,32 @@ describe('ArtifactService library API', () => {
       ).resolves.toMatchObject({ data: [], page: 1, pages: 0 });
 
       const listPipeline = artifactModel.aggregate.mock.calls[0][0];
-      expect(listPipeline).toContainEqual({
-        $match: { _currentVersion: { $ne: null } },
-      });
+      const currentVersionMatch = {
+        $match: {
+          $expr: {
+            $gt: [
+              {
+                $size: {
+                  $filter: {
+                    input: { $ifNull: ['$versions', []] },
+                    as: 'version',
+                    cond: { $eq: ['$$version.version', '$currentVersion'] },
+                  },
+                },
+              },
+              0,
+            ],
+          },
+        },
+      };
+      expect(listPipeline).toContainEqual(currentVersionMatch);
+
+      const availableMonthsPipeline = artifactModel.aggregate.mock.calls[1][0];
+      expect(availableMonthsPipeline).toContainEqual(currentVersionMatch);
+      expect(artifactModel.distinct).toHaveBeenCalledWith(
+        'type',
+        expect.objectContaining(currentVersionMatch.$match),
+      );
     });
   });
 

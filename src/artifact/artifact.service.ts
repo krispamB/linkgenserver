@@ -371,17 +371,22 @@ export class ArtifactService implements ArtifactWriter {
       };
     }
 
+    const matchingCurrentVersionsExpression = {
+      $filter: {
+        input: { $ifNull: ['$versions', []] },
+        as: 'version',
+        cond: { $eq: ['$$version.version', '$currentVersion'] },
+      },
+    };
     const currentVersionExpression = {
-      $arrayElemAt: [
-        {
-          $filter: {
-            input: '$versions',
-            as: 'version',
-            cond: { $eq: ['$$version.version', '$currentVersion'] },
-          },
+      $arrayElemAt: [matchingCurrentVersionsExpression, 0],
+    };
+    const currentVersionMatch = {
+      $match: {
+        $expr: {
+          $gt: [{ $size: matchingCurrentVersionsExpression }, 0],
         },
-        0,
-      ],
+      },
     };
 
     const statusMatch = query.status
@@ -390,8 +395,8 @@ export class ArtifactService implements ArtifactWriter {
 
     const listPipeline = [
       { $match: pageMatch },
+      currentVersionMatch,
       { $set: { _currentVersion: currentVersionExpression } },
-      { $match: { _currentVersion: { $ne: null } } },
       ...statusMatch,
       { $sort: { updatedAt: -1, _id: -1 } },
       {
@@ -427,6 +432,7 @@ export class ArtifactService implements ArtifactWriter {
         this.artifactModel
           .aggregate<{ month: string }>([
             { $match: filterMatch },
+            currentVersionMatch,
             {
               $group: {
                 _id: {
@@ -441,13 +447,18 @@ export class ArtifactService implements ArtifactWriter {
             { $project: { _id: 0, month: '$_id' } },
           ])
           .exec(),
-        this.artifactModel.distinct('type', filterMatch),
+        this.artifactModel.distinct('type', {
+          ...filterMatch,
+          ...currentVersionMatch.$match,
+        }),
       ]);
 
     const aggregateResult = listResult[0] ?? { data: [], metadata: [] };
     const total = aggregateResult.metadata[0]?.total ?? 0;
     const data = await Promise.all(
       aggregateResult.data
+        // The aggregation excludes these rows; keep the boundary defensive in
+        // case a mock or future pipeline change returns malformed data.
         .filter(
           (row): row is ValidArtifactListRow => row._currentVersion !== null,
         )
