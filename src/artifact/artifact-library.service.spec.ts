@@ -163,6 +163,89 @@ describe('ArtifactService library API', () => {
   });
 
   describe('listArtifacts', () => {
+    it('should search title and source prompt with a case-insensitive literal substring before pagination', async () => {
+      const { service, artifactModel } = makeService();
+      artifactModel.aggregate.mockImplementation((pipeline: unknown[]) => ({
+        exec: jest
+          .fn()
+          .mockResolvedValue(
+            pipeline.some((stage) => '$facet' in (stage as object))
+              ? [{ data: [], metadata: [{ total: 41 }] }]
+              : [],
+          ),
+      }));
+      artifactModel.distinct.mockResolvedValue([]);
+
+      await expect(
+        service.listArtifacts(ids.user.toString(), {
+          type: ArtifactType.POST,
+          status: VersionStatus.READY,
+          month: '2026-07',
+          page: 2,
+          search: '  Deploy.*Safely  ',
+        }),
+      ).resolves.toMatchObject({ page: 2, pages: 3 });
+
+      type SearchListStage = {
+        $match?: {
+          type?: ArtifactType;
+          updatedAt?: { $gte: Date; $lt: Date };
+          $or?: Array<{ title?: RegExp; 'source.prompt'?: RegExp }>;
+        };
+        $facet?: { data: Array<Record<string, number>> };
+      };
+      const aggregateCalls = artifactModel.aggregate.mock
+        .calls as unknown as Array<[SearchListStage[]]>;
+      const listPipeline = aggregateCalls[0][0];
+      const pageMatch = listPipeline[0].$match;
+      if (!pageMatch?.$or) throw new Error('Expected search match stage');
+      expect(pageMatch.type).toBe(ArtifactType.POST);
+      expect(pageMatch.updatedAt).toEqual({
+        $gte: new Date(2026, 6, 1),
+        $lt: new Date(2026, 7, 1),
+      });
+      expect(pageMatch.$or).toHaveLength(2);
+      const titleSearch = pageMatch.$or[0].title;
+      const promptSearch = pageMatch.$or[1]['source.prompt'];
+      if (!titleSearch || !promptSearch) {
+        throw new Error('Expected title and prompt search expressions');
+      }
+      expect(titleSearch).toBeInstanceOf(RegExp);
+      expect(titleSearch.source).toBe('Deploy\\.\\*Safely');
+      expect(titleSearch.flags).toContain('i');
+      expect(promptSearch.source).toBe('Deploy\\.\\*Safely');
+      expect(titleSearch.test('A DEPLOY.*SAFELY checklist')).toBe(true);
+      expect(promptSearch.test('How to deploy.*safely today')).toBe(true);
+      expect(titleSearch.test('Deploy carelessly')).toBe(false);
+      expect(listPipeline).toContainEqual({
+        $match: { '_currentVersion.status': VersionStatus.READY },
+      });
+      const facet = listPipeline.find((stage) => stage.$facet)?.$facet;
+      expect(facet?.data).toContainEqual({ $skip: 20 });
+    });
+
+    it('should preserve the unsearched list when the search query is whitespace only', async () => {
+      const { service, artifactModel } = makeService();
+      artifactModel.aggregate.mockImplementation((pipeline: unknown[]) => ({
+        exec: jest
+          .fn()
+          .mockResolvedValue(
+            pipeline.some((stage) => '$facet' in (stage as object))
+              ? [{ data: [], metadata: [] }]
+              : [],
+          ),
+      }));
+      artifactModel.distinct.mockResolvedValue([]);
+
+      await service.listArtifacts(ids.user.toString(), { search: '   ' });
+
+      const aggregateCalls = artifactModel.aggregate.mock
+        .calls as unknown as Array<
+        [Array<{ $match?: Record<string, unknown> }>]
+      >;
+      expect(aggregateCalls[0][0][0].$match).not.toHaveProperty('$or');
+    });
+
     it('returns summaries, current-version status, signed previews, and filter metadata without versions', async () => {
       const { service, artifactModel } = makeService();
       const firstSlide = { type: 'cover', fields: { title: 'Hello' } };

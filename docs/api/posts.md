@@ -130,9 +130,27 @@ Removes the schedule job and returns a `SCHEDULED` Post to mutable `DRAFT`. Retu
 
 Lists Posts newest first, 20 per page. Query parameters are `connectedAccount`, `status`, `month` (`YYYY-MM`), and one-based `page`. `status` accepts `DRAFT`, `SCHEDULED`, `PUBLISHED`, or `FAILED`. Filters contain `availableMonths` and `connectedAccountIds`; all statuses count.
 
+Each artifact reference is populated with the metadata needed to label the Post while retaining its pinned version number:
+
+```json
+{
+  "artifact": {
+    "_id": "665f1a7f8f1e2c3d4a5b6c7d",
+    "type": "POST",
+    "title": "Deployment safety",
+    "source": {
+      "prompt": "Write a practical LinkedIn post about reducing deployment risk"
+    }
+  },
+  "version": 2
+}
+```
+
+`title` is optional. For a visible Post title, use a non-empty `artifact.title`; otherwise fall back to `artifact.source.prompt`. Apply any visual truncation on the client.
+
 ### `GET /posts/:id`
 
-Returns an owned Post, its `media[]`, its safe connected-account summary, and each artifact reference resolved to artifact metadata plus the exact pinned version.
+Returns an owned Post, its `media[]`, its safe connected-account summary, and each artifact reference resolved to the same minimal artifact metadata plus the exact pinned version payload. The artifact metadata contains only `_id`, `type`, optional `title`, and `source.prompt`.
 
 ### `DELETE /posts/:id`
 

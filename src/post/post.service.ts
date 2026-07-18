@@ -54,8 +54,31 @@ interface PostFilters {
 
 const POST_PAGE_SIZE = 20;
 
+export interface PostArtifactMetadata {
+  _id: Types.ObjectId;
+  type: ArtifactType;
+  title?: string;
+  source: { prompt: string };
+}
+
+export interface PopulatedPostArtifactReference {
+  artifact: PostArtifactMetadata;
+  version: number;
+}
+
+export type PostListItem = Omit<Post, 'artifacts'> & {
+  artifacts: PopulatedPostArtifactReference[];
+};
+
+export interface PostDetail extends Record<string, unknown> {
+  artifacts: Array<{
+    artifact: PostArtifactMetadata;
+    version: Artifact['versions'][number];
+  }>;
+}
+
 export interface GetPostsResult {
-  data: Post[];
+  data: PostListItem[];
   filters: PostFilters;
 }
 
@@ -632,6 +655,10 @@ export class PostService {
       .sort({ createdAt: -1 })
       .skip((normalizedPage - 1) * POST_PAGE_SIZE)
       .limit(POST_PAGE_SIZE)
+      .populate<{ artifacts: PopulatedPostArtifactReference[] }>({
+        path: 'artifacts.artifact',
+        select: '_id type title source.prompt',
+      })
       .lean()
       .exec();
 
@@ -740,7 +767,7 @@ export class PostService {
     return this.postModel.deleteOne({ _id: new Types.ObjectId(postId) }).exec();
   }
 
-  async getPost(user: User, postId: string) {
+  async getPost(user: User, postId: string): Promise<PostDetail> {
     const post = await this.postModel
       .findById(postId)
       .populate('connectedAccount', 'displayName accountType');
@@ -762,12 +789,12 @@ export class PostService {
           throw new NotFoundException('Source artifact version not found');
         }
 
-        const artifactObject = artifact.toObject() as unknown as Record<
-          string,
-          unknown
-        >;
-        const artifactMetadata = { ...artifactObject };
-        delete artifactMetadata.versions;
+        const artifactMetadata: PostArtifactMetadata = {
+          _id: artifact._id,
+          type: artifact.type,
+          ...(artifact.title !== undefined ? { title: artifact.title } : {}),
+          source: { prompt: artifact.source.prompt },
+        };
         return { artifact: artifactMetadata, version };
       }),
     );

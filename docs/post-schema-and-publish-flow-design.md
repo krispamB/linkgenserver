@@ -237,8 +237,8 @@ seam is already there.
 | POST | `/posts/:id/schedule` | `{scheduledAt}` | reschedule |
 | POST | `/posts/:id/unschedule` | — | SCHEDULED → DRAFT |
 | DELETE | `/posts/:id` | — | cancel a SCHEDULED post + remove job |
-| GET | `/posts` | `?status&month&connectedAccount&page` | list + `filters {availableMonths, connectedAccountIds}` |
-| GET | `/posts/:id` | — | one post (with resolved artifact refs) |
+| GET | `/posts` | `?status&month&connectedAccount&page` | list + filters; artifact refs populated with `_id`, `type`, optional `title`, and `source.prompt` |
+| GET | `/posts/:id` | — | one post with the same minimal artifact metadata and exact pinned-version payloads |
 | GET | `/posts/metrics/:connectedAccountId` | — | `{ total, monthly[] }` |
 
 - **List/detail** reuse today's `getPosts` shape and the `%Y-%m` `availableMonths`

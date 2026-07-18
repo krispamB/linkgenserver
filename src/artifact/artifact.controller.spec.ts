@@ -86,7 +86,7 @@ describe('ArtifactController', () => {
       await expect(
         controller.list(
           { _id: { toString: () => 'user-1' } } as any,
-          { month: '2026-07', page: 1 } as any,
+          { month: '2026-07', search: 'deployment', page: 1 } as any,
         ),
       ).resolves.toMatchObject({
         statusCode: 200,
@@ -94,6 +94,11 @@ describe('ArtifactController', () => {
         filters: { availableMonths: ['2026-07'], types: ['POST'] },
         page: 1,
         pages: 1,
+      });
+      expect(library.listArtifacts).toHaveBeenCalledWith('user-1', {
+        month: '2026-07',
+        search: 'deployment',
+        page: 1,
       });
     });
   });

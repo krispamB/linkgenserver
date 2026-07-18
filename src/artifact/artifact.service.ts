@@ -49,6 +49,7 @@ export interface ArtifactListQuery {
   type?: ArtifactType;
   status?: VersionStatus;
   month?: string;
+  search?: string;
   page?: number;
 }
 
@@ -361,6 +362,18 @@ export class ArtifactService implements ArtifactWriter {
 
     if (query.type) {
       pageMatch.type = query.type;
+    }
+
+    const search = query.search?.trim();
+    if (search) {
+      const literalSearch = new RegExp(
+        search.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'),
+        'i',
+      );
+      pageMatch.$or = [
+        { title: literalSearch },
+        { 'source.prompt': literalSearch },
+      ];
     }
 
     const monthRange = this.monthRange(query.month);

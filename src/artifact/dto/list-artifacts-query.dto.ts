@@ -1,5 +1,13 @@
 import { Transform, Type } from 'class-transformer';
-import { IsEnum, IsInt, IsOptional, Matches, Min } from 'class-validator';
+import {
+  IsEnum,
+  IsInt,
+  IsOptional,
+  IsString,
+  Matches,
+  MaxLength,
+  Min,
+} from 'class-validator';
 import { ArtifactType, VersionStatus } from 'src/database/schemas';
 
 export class ListArtifactsQueryDto {
@@ -14,6 +22,16 @@ export class ListArtifactsQueryDto {
   @IsOptional()
   @Matches(/^\d{4}-(0[1-9]|1[0-2])$/)
   month?: string;
+
+  @IsOptional()
+  @Transform(({ value }: { value: unknown }) => {
+    if (typeof value !== 'string') return value;
+    const search = value.trim();
+    return search.length > 0 ? search : undefined;
+  })
+  @IsString()
+  @MaxLength(2000)
+  search?: string;
 
   @IsOptional()
   @Type(() => Number)

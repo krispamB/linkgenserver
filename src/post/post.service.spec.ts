@@ -74,7 +74,8 @@ describe('PostService.getPosts', () => {
 
     const exec = jest.fn();
     const lean = jest.fn().mockReturnValue({ exec });
-    const limit = jest.fn().mockReturnValue({ lean });
+    const populate = jest.fn().mockReturnValue({ lean });
+    const limit = jest.fn().mockReturnValue({ lean, populate });
     const skip = jest.fn().mockReturnValue({ limit });
     const sort = jest.fn().mockReturnValue({ skip });
     const find = jest.fn().mockReturnValue({ sort });
@@ -94,6 +95,7 @@ describe('PostService.getPosts', () => {
         sort,
         skip,
         limit,
+        populate,
         lean,
         exec,
         aggregate,
@@ -107,7 +109,22 @@ describe('PostService.getPosts', () => {
     const userId = new Types.ObjectId();
     const connectedAccountId = new Types.ObjectId();
 
-    const posts = [{ _id: new Types.ObjectId(), content: 'post 1' }] as any[];
+    const posts = [
+      {
+        _id: new Types.ObjectId(),
+        artifacts: [
+          {
+            artifact: {
+              _id: new Types.ObjectId(),
+              type: 'POST',
+              title: 'Deployment safety',
+              source: { prompt: 'Write about safer deployments' },
+            },
+            version: 2,
+          },
+        ],
+      },
+    ] as any[];
     mocks.exec.mockResolvedValue(posts);
     mocks.aggregate.mockResolvedValue([
       { month: '2026-02' },
@@ -126,6 +143,10 @@ describe('PostService.getPosts', () => {
     expect(mocks.find).toHaveBeenCalledTimes(1);
     expect(mocks.skip).toHaveBeenCalledWith(20);
     expect(mocks.limit).toHaveBeenCalledWith(20);
+    expect(mocks.populate).toHaveBeenCalledWith({
+      path: 'artifacts.artifact',
+      select: '_id type title source.prompt',
+    });
     expect(mocks.lean).toHaveBeenCalledTimes(1);
     const filter = mocks.find.mock.calls[0][0];
     expect(filter.user).toEqual(userId);
@@ -211,6 +232,8 @@ describe('PostService.getPost', () => {
     const artifact = {
       _id: artifactId,
       type: 'POST',
+      source: { prompt: 'Write about approved copy' },
+      pinRevision: 4,
       versions: [
         approvedVersion,
         { version: 2, status: 'READY', content: { commentary: 'New copy' } },
@@ -218,6 +241,8 @@ describe('PostService.getPost', () => {
       toObject: () => ({
         _id: artifactId,
         type: 'POST',
+        source: { prompt: 'Write about approved copy' },
+        pinRevision: 4,
         versions: [approvedVersion],
       }),
     };
@@ -248,7 +273,11 @@ describe('PostService.getPost', () => {
     expect(result.connectedAccount).not.toHaveProperty('accessToken');
     expect(result.artifacts).toEqual([
       {
-        artifact: { _id: artifactId, type: 'POST' },
+        artifact: {
+          _id: artifactId,
+          type: 'POST',
+          source: { prompt: 'Write about approved copy' },
+        },
         version: approvedVersion,
       },
     ]);

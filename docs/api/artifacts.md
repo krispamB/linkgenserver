@@ -86,7 +86,10 @@ Lists live artifacts as lightweight summaries, newest first, with 20 results per
 | `type` | `POST \| POLL \| DOCUMENT` | Optional type filter. |
 | `status` | `GENERATING \| READY \| FAILED` | Optional current-version status filter. |
 | `month` | `YYYY-MM` | Optional `updatedAt` month filter. |
+| `search` | string | Optional case-insensitive literal substring match against `title` and the original `source.prompt`. Surrounding whitespace is ignored. |
 | `page` | positive integer | Optional one-based page; defaults to `1`. |
+
+Search treats punctuation and regular-expression characters literally. It can be combined with every other filter, and pagination metadata reflects the matching result set.
 
 ### Response: `200 OK`
 

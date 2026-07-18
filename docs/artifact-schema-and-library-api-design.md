@@ -189,7 +189,7 @@ artifact isn't the caller's — same pattern as `PostService`).
 | POST | `/artifacts` | `{type, prompt, withResearch, stylePreset?}` | `202 {artifactId, runId}` |
 | POST | `/artifacts/:id/refine` | `{feedback}` | `202 {artifactId, version, runId}` |
 | PATCH | `/artifacts/:id` | partial content edit (head, `READY` only) | `200` |
-| GET | `/artifacts` | `?type&status&month&page` | list of **summaries** + `filters {availableMonths, types}` |
+| GET | `/artifacts` | `?type&status&month&search&page` | list of **summaries** + `filters {availableMonths, types}` |
 | GET | `/artifacts/:id` | `?version=N` / `?includeVersions=true` | current version (or a specific version / + version-metadata history) |
 | DELETE | `/artifacts/:id` | — | `200` soft delete |
 
@@ -199,6 +199,9 @@ artifact isn't the caller's — same pattern as `PostService`).
   soft-deleted, sorted `updatedAt` desc, paginated. The `month` filter reuses the
   existing `getPosts` `%Y-%m` aggregation; the `filters` block mirrors today's posts
   endpoint minus `connectedAccountIds` (artifacts are account-agnostic).
+- **Search is library-oriented** — `search` is a trimmed, case-insensitive literal
+  substring match against the editable `title` and immutable `source.prompt`. It
+  composes with the other list filters and is applied before pagination/counting.
 - **Get** returns the current version's full content by default; `?version=N` for a
   specific version; `?includeVersions=true` adds **version metadata only**
   (`{version, status, createdAt, editedAt, refineFeedback}`) for a history sidebar.
