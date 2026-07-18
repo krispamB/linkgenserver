@@ -2,6 +2,7 @@ import { Job, Worker } from 'bullmq';
 import {
   EMAIL_QUEUE_NAME,
   LINKEDIN_AVATAR_REFRESH_QUEUE_NAME,
+  MEDIA_UPLOAD_QUEUE_NAME,
   QUEUE_NAME,
   SCHEDULE_QUEUE_NAME,
 } from '../workflow.constants';
@@ -26,6 +27,12 @@ import { FeatureGatingService } from '../../feature-gating/feature-gating.servic
 import { RedisService } from '../../redis/redis.service';
 import { WorkflowRunService } from '../workflow-run.service';
 import { BuildInput } from '../engine/workflow.types';
+import { LinkedinMediaService } from '../../post/linkedin-media.service';
+import { MediaUploadJobData } from '../media-upload.queue';
+import {
+  handleMediaUploadJobExhausted,
+  processMediaUploadJob,
+} from './media-upload.worker.handler';
 
 async function bootstrapWorker() {
   const logger = new Logger(
@@ -40,6 +47,7 @@ async function bootstrapWorker() {
   const mailService = app.get(MailService);
   const emailQueue = app.get(EmailQueue);
   const userModel = app.get<Model<User>>(getModelToken(User.name));
+  const linkedinMediaService = app.get(LinkedinMediaService);
 
   logger.log('NestJs context ready');
 
@@ -159,5 +167,37 @@ async function bootstrapWorker() {
       },
     },
   );
+
+  const mediaUploadWorker = new Worker(
+    MEDIA_UPLOAD_QUEUE_NAME,
+    async (job: Job<MediaUploadJobData>) => {
+      try {
+        await processMediaUploadJob(job, logger, linkedinMediaService);
+      } catch (error) {
+        logger.error(error);
+        throw error;
+      }
+    },
+    {
+      connection: {
+        url: process.env.REDIS_URL!,
+        maxRetriesPerRequest: null,
+        enableReadyCheck: false,
+      },
+    },
+  );
+
+  mediaUploadWorker.on('failed', (job, error) => {
+    if (!job) return;
+    if (job.attemptsMade >= (job.opts.attempts ?? 1)) {
+      handleMediaUploadJobExhausted(job, logger, linkedinMediaService).catch(
+        (failure) => logger.error(failure),
+      );
+      return;
+    }
+    logger.warn(
+      `Media upload job ${job.id} failed (attempt ${job.attemptsMade}/${job.opts.attempts ?? 1}): ${error.message}`,
+    );
+  });
 }
 bootstrapWorker();

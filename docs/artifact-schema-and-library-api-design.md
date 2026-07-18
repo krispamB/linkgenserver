@@ -6,6 +6,12 @@
 > Supersedes the current `src/database/schemas/artifact.schema.ts` (which has a
 > `type` enum/type mismatch: `enum: ['html','text','structured']` on a field typed
 > `ArtifactType`).
+>
+> **Amended 2026-07-18:** a READY version may still be edited in place while unpinned, but
+> `PATCH /artifacts/:id` returns `409` when the current version is referenced by a SCHEDULED
+> or PUBLISHED Post. A family-level `pinRevision` CAS also closes the race between an edit
+> and a concurrent schedule/publish action. This preserves the approved scheduled preview
+> and published history.
 
 Feeds the final spec assembly (#110). Interlocking tickets are referenced inline
 at each boundary.
@@ -57,6 +63,8 @@ GENERATING → FAILED
   orthogonal to generation).
 - **Publish state is deliberately absent** — whether an artifact has been posted is a
   `Post` concern (#106); referencing an artifact from a post doesn't mutate it.
+- **Pinned versions are immutable** — the Post reference does not mutate the artifact, but
+  it prevents in-place edits while any SCHEDULED or PUBLISHED Post depends on that version.
 
 ## 3. Schema
 
@@ -67,6 +75,7 @@ enum VersionStatus  { GENERATING = 'GENERATING', READY = 'READY', FAILED = 'FAIL
 Artifact {                          // top-level, user-owned library unit
   _id
   user:           ObjectId<User>
+  pinRevision:    number            // CAS bumped whenever a version is pinned
   type:           ArtifactType
   title?:         string            // editable display label for the library
   source:         { prompt: string; withResearch: boolean; stylePreset?: StylePreset }

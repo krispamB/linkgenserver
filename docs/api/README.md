@@ -91,17 +91,24 @@ GET /artifacts/:id?version=<version>
         │ status READY
         ▼
 POST /posts
+        │ DRAFT: attach/preview media and confirm composition
+        ▼
+POST /posts/:id/publish or /schedule
 ```
 
-## Removed legacy routes
+## Post composition routes
 
-The branch replaces the old draft/media workflow. Client code should not call these routes anymore:
+Post composition uses the current Artifact-backed Post model:
+
+- `POST /posts` creates a `DRAFT`; it never publishes implicitly.
+- `PATCH /posts/:id` changes the selected artifact/version while editable.
+- `POST /posts/:id/media/uploads` and `/complete` provide direct-to-R2 media attachment.
+- `PATCH`/`DELETE /posts/:postId/media/:mediaId` edit or remove attached media.
+- `GET /posts/:postId/media/:mediaId/preview` resolves READY image/video previews.
+- `/publish`, `/schedule`, and `/unschedule` are explicit lifecycle actions.
+
+The following legacy routes remain removed:
 
 - `POST /posts/:id/draft`
 - `PUT /posts/:id/media`
-- `POST /posts/:id/media/uploads`
-- `POST /posts/:id/media/uploads/complete`
-- `PATCH /posts/:id`
 - `GET /posts/:id/status`
-
-Use artifact generation/editing for content and `POST /posts` for publishing or scheduling.

@@ -200,7 +200,7 @@ Poll options must be unique after trimming and case-folding. The server validate
 
 ## `PATCH /artifacts/:id`
 
-Edits the current version in place. It does not create a new version. The current version must be `READY`; the response stamps `editedAt`.
+Edits the current version in place. It does not create a new version. The current version must be `READY`, must not be referenced by a `SCHEDULED` or `PUBLISHED` Post, and the response stamps `editedAt`.
 
 Preferred request envelope:
 
@@ -227,7 +227,7 @@ The response is the same artifact detail shape as `GET /artifacts/:id`, inside `
 
 - `400` invalid or incomplete content after merging the patch.
 - `404` artifact not found, deleted, or not owned by the caller.
-- `409` current version is not `READY`, or changed before the edit was saved.
+- `409` current version is not `READY`, is pinned by a scheduled/published Post, or changed before the edit was saved. Unschedule first or create/refine another version instead of mutating an approved composition.
 
 ## `DELETE /artifacts/:id`
 

@@ -96,7 +96,7 @@ Key schemas in `src/database/schemas/`:
 - `ConnectedAccount` — stores encrypted LinkedIn tokens; supports `PERSON` and `ORGANIZATION` account types with an `impersonatorUrn` linking org accounts back to the personal account
 - `Artifact` — owns versioned generated content for `POST`, `POLL`, and `DOCUMENT` artifacts
 - `WorkflowRun` — records asynchronous artifact generation/refinement progress, research context, and credits used
-- `Post` — pins one or more artifact versions to a connected account and moves through `SCHEDULED`, `PUBLISHED`, or `FAILED`
+- `Post` — a mutable `DRAFT` composition that pins an artifact version to an immutable connected account, owns uploaded image/video media, and moves through `DRAFT`, `SCHEDULED`, `PUBLISHED`, or `FAILED`
 - `Subscription` — Paddle subscription state; `currentPeriodStart`/`currentPeriodEnd` drives usage period calculation
 - `Tier` — holds feature `limits` map (keyed by `FeatureKey`); one tier has `isDefault: true`
 - `Usage` — metered usage counters per `(user_id, feature, periodStart)`

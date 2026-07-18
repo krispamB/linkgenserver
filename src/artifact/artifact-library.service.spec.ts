@@ -4,6 +4,8 @@ jest.mock(
   'src/database/schemas',
   () => ({
     Artifact: { name: 'Artifact' },
+    Post: { name: 'Post' },
+    PostStatus: { SCHEDULED: 'SCHEDULED', PUBLISHED: 'PUBLISHED' },
     ArtifactType: { POST: 'POST', POLL: 'POLL', DOCUMENT: 'DOCUMENT' },
     CarouselTheme: {
       BOLD: 'bold',
@@ -37,9 +39,11 @@ const makeService = () => {
     findOneAndUpdate: jest.fn(),
     updateOne: jest.fn(),
   };
+  const postModel = { exists: jest.fn().mockResolvedValue(false) };
   return {
-    service: new ArtifactService(artifactModel as never),
+    service: new ArtifactService(artifactModel as never, postModel as never),
     artifactModel,
+    postModel,
   };
 };
 
@@ -260,6 +264,36 @@ describe('ArtifactService library API', () => {
   });
 
   describe('updateArtifact', () => {
+    it('rejects an in-place edit when the current version is pinned by a scheduled post', async () => {
+      const { service, artifactModel, postModel } = makeService();
+      artifactModel.findById.mockResolvedValue(readyPost());
+      postModel.exists.mockResolvedValue(true);
+
+      await expect(
+        service.updateArtifact(ids.user.toString(), ids.artifact.toString(), {
+          content: { commentary: 'Changed after approval' },
+        }),
+      ).rejects.toThrow('pinned by a scheduled or published post');
+      expect(artifactModel.findOneAndUpdate).not.toHaveBeenCalled();
+    });
+
+    it('rejects an edit when scheduling advances the pin revision concurrently', async () => {
+      const { service, artifactModel } = makeService();
+      artifactModel.findById.mockResolvedValue(readyPost({ pinRevision: 2 }));
+      artifactModel.findOneAndUpdate.mockResolvedValue(null);
+
+      await expect(
+        service.updateArtifact(ids.user.toString(), ids.artifact.toString(), {
+          content: { commentary: 'Concurrent edit' },
+        }),
+      ).rejects.toThrow('changed before the edit could be saved');
+      expect(artifactModel.findOneAndUpdate).toHaveBeenCalledWith(
+        expect.objectContaining({ pinRevision: 2 }),
+        expect.anything(),
+        { new: true },
+      );
+    });
+
     it('deep-merges and validates a partial content edit in the READY head without creating a version', async () => {
       const { service, artifactModel } = makeService();
       const artifact = readyPost();
@@ -288,6 +322,7 @@ describe('ArtifactService library API', () => {
           _id: ids.artifact,
           user: ids.user,
           currentVersion: 1,
+          $or: [{ pinRevision: 0 }, { pinRevision: { $exists: false } }],
           versions: {
             $elemMatch: { version: 1, status: VersionStatus.READY },
           },

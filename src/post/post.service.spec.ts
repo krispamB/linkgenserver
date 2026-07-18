@@ -16,8 +16,16 @@ jest.mock(
     },
     Post: { name: 'Post' },
     PostStatus: {
+      DRAFT: 'DRAFT',
       SCHEDULED: 'SCHEDULED',
       PUBLISHED: 'PUBLISHED',
+      FAILED: 'FAILED',
+    },
+    PostMediaType: { IMAGE: 'IMAGE', VIDEO: 'VIDEO' },
+    PostMediaStatus: {
+      PENDING: 'PENDING',
+      UPLOADING: 'UPLOADING',
+      READY: 'READY',
       FAILED: 'FAILED',
     },
     User: { name: 'User' },
@@ -45,9 +53,18 @@ jest.mock(
   () => ({ FeatureGatingService: class FeatureGatingService {} }),
   { virtual: true },
 );
-jest.mock('src/s3', () => ({ getFile: jest.fn() }), { virtual: true });
+jest.mock(
+  'src/s3',
+  () => ({
+    deleteFile: jest.fn(),
+    getFile: jest.fn(),
+    getSignedUploadUrl: jest.fn(),
+    headFile: jest.fn(),
+  }),
+  { virtual: true },
+);
 import { PostService } from './post.service';
-import { getFile } from 'src/s3';
+import { deleteFile, getFile, getSignedUploadUrl, headFile } from 'src/s3';
 import { apiFetch } from 'src/common/HelperFn/apiFetch.helper';
 import { formatLinkedinContent } from 'src/common/HelperFn';
 
@@ -313,6 +330,9 @@ describe('PostService.schedulePost', () => {
     const assertScheduledPostQuota = jest.fn().mockResolvedValue(undefined);
     const incrementScheduledPostUsage = jest.fn().mockResolvedValue(undefined);
     const hasScheduledPostUsage = jest.fn().mockResolvedValue(false);
+    const updateArtifactPinRevision = jest
+      .fn()
+      .mockResolvedValue({ matchedCount: 1 });
 
     (service as any).postModel = {
       findById,
@@ -331,6 +351,9 @@ describe('PostService.schedulePost', () => {
       incrementScheduledPostUsage,
       hasScheduledPostUsage,
     };
+    (service as any).artifactModel = {
+      updateOne: updateArtifactPinRevision,
+    };
 
     return {
       service,
@@ -343,6 +366,7 @@ describe('PostService.schedulePost', () => {
         assertScheduledPostQuota,
         incrementScheduledPostUsage,
         hasScheduledPostUsage,
+        updateArtifactPinRevision,
       },
     };
   };
@@ -437,6 +461,7 @@ describe('PostService.schedulePost', () => {
       user: userId,
       connectedAccount: new Types.ObjectId(),
       status: 'SCHEDULED',
+      media: [],
       save: mocks.save,
     } as any;
 
@@ -621,6 +646,61 @@ describe('PostService.schedulePost', () => {
       userId.toString(),
     );
     expect(mocks.incrementScheduledPostUsage).not.toHaveBeenCalled();
+    expect(post.status).toBe('FAILED');
+    expect(post.scheduledAt).toBeUndefined();
+    expect(mocks.save).not.toHaveBeenCalled();
+  });
+
+  it('should restore the previous queue job when rescheduling enqueue fails', async () => {
+    const { service, mocks } = createService();
+    const userId = new Types.ObjectId();
+    const postId = new Types.ObjectId();
+    const previousScheduledAt = new Date(Date.now() + 5 * 60 * 1000);
+    const nextScheduledAt = new Date(Date.now() + 10 * 60 * 1000);
+    const artifactId = new Types.ObjectId();
+    const remove = jest.fn().mockResolvedValue(undefined);
+    const post = {
+      _id: postId,
+      user: userId,
+      connectedAccount: new Types.ObjectId(),
+      artifacts: [{ artifact: artifactId, version: 1 }],
+      status: 'SCHEDULED',
+      scheduledAt: previousScheduledAt,
+      scheduledPostUsageCounted: true,
+      save: mocks.save,
+    } as any;
+    mocks.findById.mockResolvedValue(post);
+    mocks.findConnectedAccountById.mockResolvedValue({
+      user: userId,
+      provider: 'LINKEDIN',
+      isActive: true,
+      accessToken: 'encrypted-token',
+    });
+    mocks.getJob.mockResolvedValue({ remove });
+    mocks.addScheduleJob
+      .mockRejectedValueOnce(new Error('queue unavailable'))
+      .mockResolvedValueOnce(undefined);
+
+    await expect(
+      service.schedulePost({ _id: userId } as any, postId.toString(), {
+        scheduledAt: nextScheduledAt.toISOString(),
+      } as any),
+    ).rejects.toThrow('queue unavailable');
+
+    expect(remove).toHaveBeenCalledTimes(1);
+    expect(mocks.updateArtifactPinRevision).toHaveBeenCalledWith(
+      { _id: artifactId, currentVersion: 1 },
+      { $inc: { pinRevision: 1 } },
+    );
+    expect(mocks.addScheduleJob).toHaveBeenCalledTimes(2);
+    expect(mocks.addScheduleJob).toHaveBeenLastCalledWith(
+      postId.toString(),
+      userId.toString(),
+      expect.any(Number),
+    );
+    expect(post.status).toBe('SCHEDULED');
+    expect(post.scheduledAt).toEqual(previousScheduledAt);
+    expect(mocks.save).not.toHaveBeenCalled();
   });
 });
 
@@ -669,6 +749,9 @@ describe('PostService artifact publishing', () => {
         .mockImplementation((values) => Object.assign(post, values)),
       findPostById: jest.fn().mockResolvedValue(post),
       findArtifactById: jest.fn().mockResolvedValue(artifact),
+      updateArtifactPinRevision: jest
+        .fn()
+        .mockResolvedValue({ matchedCount: 1 }),
       findAccountById: jest.fn().mockResolvedValue(account),
       addScheduleJob: jest.fn().mockResolvedValue(undefined),
       getScheduleJob: jest.fn().mockResolvedValue(null),
@@ -678,12 +761,16 @@ describe('PostService artifact publishing', () => {
       assertCompanyPagesAccess: jest.fn().mockResolvedValue(undefined),
       decrypt: jest.fn().mockResolvedValue('token'),
       uploadDocument: jest.fn().mockResolvedValue('urn:li:document:1'),
+      getMediaDetails: jest.fn(),
     };
     Object.assign(service as any, {
       postModel: Object.assign(mocks.postModel, {
         findById: mocks.findPostById,
       }),
-      artifactModel: { findById: mocks.findArtifactById },
+      artifactModel: {
+        findById: mocks.findArtifactById,
+        updateOne: mocks.updateArtifactPinRevision,
+      },
       connectedAccountModel: { findById: mocks.findAccountById },
       scheduleQueue: {
         addScheduleJob: mocks.addScheduleJob,
@@ -696,7 +783,10 @@ describe('PostService artifact publishing', () => {
         assertCompanyPagesAccess: mocks.assertCompanyPagesAccess,
       },
       encryptionService: { decrypt: mocks.decrypt },
-      linkedinMediaService: { uploadDocument: mocks.uploadDocument },
+      linkedinMediaService: {
+        uploadDocument: mocks.uploadDocument,
+        getMediaDetails: mocks.getMediaDetails,
+      },
       LINKEDIN_API_BASE: 'https://api.linkedin.com/rest',
       logger: { error: jest.fn() },
     });
@@ -720,14 +810,8 @@ describe('PostService artifact publishing', () => {
   });
 
   describe('createPost', () => {
-    it('should pin and publish the READY artifact version when scheduledAt is absent', async () => {
+    it('should create a mutable DRAFT with the selected READY artifact version', async () => {
       const { service, mocks, fixtures } = makeService();
-      const publishedDocument = {
-        ...fixtures.post,
-        save: jest.fn().mockResolvedValue(undefined),
-      };
-      mocks.findPostById.mockResolvedValueOnce(publishedDocument);
-
       const result = await service.createPost({ _id: fixtures.userId } as any, {
         artifactId: fixtures.artifactId.toString(),
         connectedAccount: fixtures.accountId.toString(),
@@ -737,11 +821,12 @@ describe('PostService artifact publishing', () => {
         expect.objectContaining({
           artifacts: [{ artifact: fixtures.artifactId, version: 1 }],
           connectedAccount: fixtures.accountId,
+          status: 'DRAFT',
         }),
       );
-      expect(result.status).toBe('PUBLISHED');
-      expect(result.channelPostId).toBe('urn:li:share:123');
-      expect(result).toBe(publishedDocument);
+      expect(result).toBe(fixtures.post);
+      expect(apiFetch).not.toHaveBeenCalled();
+      expect(mocks.addScheduleJob).not.toHaveBeenCalled();
       expect(mocks.assertScheduledPostQuota).not.toHaveBeenCalled();
       expect(mocks.incrementScheduledPostUsage).not.toHaveBeenCalled();
     });
@@ -770,30 +855,20 @@ describe('PostService artifact publishing', () => {
       ).rejects.toBeInstanceOf(ForbiddenException);
     });
 
-    it('should schedule a pinned version and count usage when scheduledAt is present', async () => {
-      const { service, mocks, fixtures } = makeService();
+    it('should reject scheduledAt because scheduling is an explicit action', async () => {
+      const { service, fixtures } = makeService();
       const scheduledAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
 
-      const result = await service.createPost({ _id: fixtures.userId } as any, {
-        artifactId: fixtures.artifactId.toString(),
-        connectedAccount: fixtures.accountId.toString(),
-        scheduledAt,
-      });
-
-      expect(mocks.assertScheduledPostQuota).toHaveBeenCalledWith(
-        fixtures.userId.toString(),
-      );
-      expect(mocks.addScheduleJob).toHaveBeenCalledWith(
-        fixtures.postId.toString(),
-        fixtures.userId.toString(),
-        expect.any(Number),
-      );
-      expect(mocks.incrementScheduledPostUsage).toHaveBeenCalledWith(
-        fixtures.userId.toString(),
-        fixtures.postId.toString(),
-      );
-      expect(result.scheduledPostUsageCounted).toBe(true);
-      expect(apiFetch).not.toHaveBeenCalled();
+      await expect(
+        service.createPost(
+          { _id: fixtures.userId } as any,
+          {
+            artifactId: fixtures.artifactId.toString(),
+            connectedAccount: fixtures.accountId.toString(),
+            scheduledAt,
+          } as any,
+        ),
+      ).rejects.toThrow('scheduledAt is not accepted when creating a draft');
     });
   });
 
@@ -809,6 +884,43 @@ describe('PostService artifact publishing', () => {
       });
       expect(JSON.parse(request.body).content).toBeUndefined();
       expect(fixtures.post.status).toBe('PUBLISHED');
+    });
+
+    it('should publish one READY image using its LinkedIn URN', async () => {
+      const { service, fixtures } = makeService();
+      fixtures.post.media = [
+        {
+          id: 'media-1',
+          linkedinUrn: 'urn:li:image:1',
+          type: 'IMAGE',
+          title: 'Launch',
+          altText: 'Product screenshot',
+          status: 'READY',
+        },
+      ];
+
+      await service.publishPost(fixtures.postId.toString());
+
+      const body = JSON.parse((apiFetch as jest.Mock).mock.calls[0][1].body);
+      expect(body.content).toEqual({
+        media: {
+          id: 'urn:li:image:1',
+          title: 'Launch',
+          altText: 'Product screenshot',
+        },
+      });
+    });
+
+    it('should block publishing when attached media has FAILED', async () => {
+      const { service, fixtures } = makeService();
+      fixtures.post.media = [
+        { id: 'media-1', type: 'IMAGE', status: 'FAILED' },
+      ];
+
+      await expect(
+        service.publishPost(fixtures.postId.toString()),
+      ).rejects.toThrow('Media uploads must be resolved before publishing');
+      expect(apiFetch).not.toHaveBeenCalled();
     });
 
     it('should publish inline poll content without uploading media when the artifact is a POLL', async () => {
@@ -898,6 +1010,21 @@ describe('PostService artifact publishing', () => {
   });
 
   describe('publishPostNow', () => {
+    it('should publish an owned DRAFT without a schedule job', async () => {
+      const { service, mocks, fixtures } = makeService();
+      fixtures.post.status = 'DRAFT';
+
+      const result = await service.publishPostNow(
+        { _id: fixtures.userId } as any,
+        fixtures.postId.toString(),
+      );
+
+      expect(mocks.getScheduleJob).toHaveBeenCalledWith(
+        fixtures.postId.toString(),
+      );
+      expect(result.status).toBe('PUBLISHED');
+    });
+
     it('should remove the pending job when publishing an owned SCHEDULED post', async () => {
       const { service, mocks, fixtures } = makeService();
       const remove = jest.fn().mockResolvedValue(undefined);
@@ -926,6 +1053,311 @@ describe('PostService artifact publishing', () => {
       ).rejects.toBeInstanceOf(ForbiddenException);
       expect(mocks.getScheduleJob).not.toHaveBeenCalled();
       expect(apiFetch).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('updatePost', () => {
+    it('should replace the selected artifact on an owned DRAFT', async () => {
+      const { service, fixtures } = makeService();
+      fixtures.post.status = 'DRAFT';
+
+      const result = await service.updatePost(
+        { _id: fixtures.userId } as any,
+        fixtures.postId.toString(),
+        { artifactId: fixtures.artifactId.toString(), version: 1 },
+      );
+
+      expect(result.artifacts).toEqual([
+        { artifact: fixtures.artifactId, version: 1 },
+      ]);
+      expect(fixtures.post.save).toHaveBeenCalledTimes(1);
+    });
+
+    it('should return a FAILED post to DRAFT when its selection changes', async () => {
+      const { service, fixtures } = makeService();
+      fixtures.post.status = 'FAILED';
+      fixtures.post.failureReason = 'LinkedIn rejected the post';
+      fixtures.post.scheduledAt = new Date();
+
+      await service.updatePost(
+        { _id: fixtures.userId } as any,
+        fixtures.postId.toString(),
+        { artifactId: fixtures.artifactId.toString() },
+      );
+
+      expect(fixtures.post).toMatchObject({ status: 'DRAFT' });
+      expect(fixtures.post.failureReason).toBeUndefined();
+      expect(fixtures.post.scheduledAt).toBeUndefined();
+    });
+
+    it('should reject a non-POST artifact while uploaded media is attached', async () => {
+      const { service, fixtures } = makeService();
+      fixtures.post.status = 'DRAFT';
+      fixtures.post.media = [{ id: 'media-1', type: 'IMAGE', status: 'READY' }];
+      fixtures.artifact.type = 'POLL';
+
+      await expect(
+        service.updatePost(
+          { _id: fixtures.userId } as any,
+          fixtures.postId.toString(),
+          { artifactId: fixtures.artifactId.toString() },
+        ),
+      ).rejects.toThrow(
+        'Uploaded media can only be attached to POST artifacts',
+      );
+    });
+  });
+
+  describe('unschedulePost', () => {
+    it('should remove the schedule job and return the post to DRAFT', async () => {
+      const { service, mocks, fixtures } = makeService();
+      const remove = jest.fn().mockResolvedValue(undefined);
+      mocks.getScheduleJob.mockResolvedValue({ remove });
+      fixtures.post.status = 'SCHEDULED';
+      fixtures.post.scheduledAt = new Date();
+
+      const result = await service.unschedulePost(
+        { _id: fixtures.userId } as any,
+        fixtures.postId.toString(),
+      );
+
+      expect(remove).toHaveBeenCalledTimes(1);
+      expect(result.status).toBe('DRAFT');
+      expect(result.scheduledAt).toBeUndefined();
+    });
+  });
+});
+
+describe('PostService media composition', () => {
+  const makeService = () => {
+    const service = Object.create(PostService.prototype) as PostService;
+    const userId = new Types.ObjectId();
+    const postId = new Types.ObjectId();
+    const artifactId = new Types.ObjectId();
+    const accountId = new Types.ObjectId();
+    const post = {
+      _id: postId,
+      user: userId,
+      connectedAccount: accountId,
+      artifacts: [{ artifact: artifactId, version: 1 }],
+      status: 'DRAFT',
+      media: [] as any[],
+      save: jest.fn().mockResolvedValue(undefined),
+      markModified: jest.fn(),
+    } as any;
+    const artifact = {
+      _id: artifactId,
+      user: userId,
+      type: 'POST',
+      currentVersion: 1,
+      versions: [
+        { version: 1, status: 'READY', content: { commentary: 'Text' } },
+      ],
+    } as any;
+    const account = {
+      _id: accountId,
+      user: userId,
+      provider: 'LINKEDIN',
+      isActive: true,
+      accessToken: 'encrypted',
+      accountType: 'PERSON',
+      externalId: 'person-1',
+      profileMetadata: {},
+    } as any;
+    const addMediaUploadJob = jest.fn().mockResolvedValue(undefined);
+    const getMediaDetails = jest.fn().mockResolvedValue({
+      downloadUrl: 'https://media.linkedin.test/file',
+      downloadUrlExpiresAt: 1234,
+    });
+    Object.assign(service as any, {
+      postModel: { findById: jest.fn().mockResolvedValue(post) },
+      artifactModel: { findById: jest.fn().mockResolvedValue(artifact) },
+      connectedAccountModel: { findById: jest.fn().mockResolvedValue(account) },
+      encryptionService: { decrypt: jest.fn().mockResolvedValue('token') },
+      featureGatingService: { assertCompanyPagesAccess: jest.fn() },
+      mediaUploadQueue: { addMediaUploadJob },
+      linkedinMediaService: { getMediaDetails },
+      MEDIA_UPLOAD_SLOT_TTL_MS: 30 * 60 * 1000,
+    });
+    return {
+      service,
+      mocks: { addMediaUploadJob, getMediaDetails },
+      fixtures: { userId, postId, artifactId, accountId, post, artifact },
+    };
+  };
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    (getSignedUploadUrl as jest.Mock).mockResolvedValue(
+      'https://r2.test/upload',
+    );
+    (headFile as jest.Mock).mockResolvedValue({
+      sizeBytes: 1024,
+      mimeType: 'image/jpeg',
+    });
+    (deleteFile as jest.Mock).mockResolvedValue(undefined);
+  });
+
+  describe('initiateMediaUpload', () => {
+    it('should append stable PENDING media and return a presigned upload slot', async () => {
+      const { service, fixtures } = makeService();
+
+      const result = await service.initiateMediaUpload(
+        { _id: fixtures.userId } as any,
+        fixtures.postId.toString(),
+        {
+          files: [
+            {
+              fileName: 'launch.jpg',
+              mimeType: 'image/jpeg',
+              sizeBytes: 1024,
+            },
+          ],
+        },
+      );
+
+      expect(result.uploads[0]).toMatchObject({
+        mediaId: expect.any(String),
+        uploadUrl: 'https://r2.test/upload',
+      });
+      expect(fixtures.post.media[0]).toMatchObject({
+        id: result.uploads[0].mediaId,
+        type: 'IMAGE',
+        status: 'PENDING',
+      });
+    });
+  });
+
+  describe('completeMediaUpload', () => {
+    it('should keep the media id stable and enqueue the LinkedIn transfer', async () => {
+      const { service, mocks, fixtures } = makeService();
+      fixtures.post.media = [
+        {
+          id: 'media-1',
+          type: 'IMAGE',
+          title: 'launch.jpg',
+          altText: 'launch.jpg',
+          status: 'PENDING',
+          mimeType: 'image/jpeg',
+          sizeBytes: 1024,
+          pendingExpiresAt: new Date(Date.now() + 60_000),
+        },
+      ];
+
+      await service.completeMediaUpload(
+        { _id: fixtures.userId } as any,
+        fixtures.postId.toString(),
+        { mediaIds: ['media-1'] },
+      );
+
+      expect(fixtures.post.media[0]).toMatchObject({
+        id: 'media-1',
+        status: 'UPLOADING',
+      });
+      expect(mocks.addMediaUploadJob).toHaveBeenCalledWith({
+        postId: fixtures.postId.toString(),
+        connectedAccountId: fixtures.accountId.toString(),
+        ownerUrn: 'urn:li:person:person-1',
+        items: [
+          {
+            mediaId: 'media-1',
+            r2Key: `media-uploads/${fixtures.postId.toString()}/media-1`,
+            mediaType: 'IMAGE',
+          },
+        ],
+      });
+    });
+
+    it('should mark media failed when the transfer job cannot be enqueued', async () => {
+      const { service, mocks, fixtures } = makeService();
+      fixtures.post.media = [
+        {
+          id: 'media-1',
+          type: 'IMAGE',
+          status: 'PENDING',
+          mimeType: 'image/jpeg',
+          sizeBytes: 1024,
+          pendingExpiresAt: new Date(Date.now() + 60_000),
+        },
+      ];
+      mocks.addMediaUploadJob.mockRejectedValue(new Error('queue unavailable'));
+
+      await expect(
+        service.completeMediaUpload(
+          { _id: fixtures.userId } as any,
+          fixtures.postId.toString(),
+          { mediaIds: ['media-1'] },
+        ),
+      ).rejects.toThrow('queue unavailable');
+
+      expect(fixtures.post.media[0].status).toBe('FAILED');
+      expect(fixtures.post.save).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  describe('updateMedia', () => {
+    it('should update image metadata without accepting lifecycle fields', async () => {
+      const { service, fixtures } = makeService();
+      fixtures.post.media = [{ id: 'media-1', type: 'IMAGE', status: 'READY' }];
+
+      const result = await service.updateMedia(
+        { _id: fixtures.userId } as any,
+        fixtures.postId.toString(),
+        'media-1',
+        { title: 'Launch', altText: 'Dashboard preview' },
+      );
+
+      expect(result).toMatchObject({
+        id: 'media-1',
+        title: 'Launch',
+        altText: 'Dashboard preview',
+        status: 'READY',
+      });
+    });
+  });
+
+  describe('removeMedia', () => {
+    it('should remove media by its stable id', async () => {
+      const { service, fixtures } = makeService();
+      fixtures.post.media = [
+        { id: 'media-1', type: 'IMAGE', status: 'FAILED' },
+      ];
+
+      await expect(
+        service.removeMedia(
+          { _id: fixtures.userId } as any,
+          fixtures.postId.toString(),
+          'media-1',
+        ),
+      ).resolves.toEqual([]);
+      expect(fixtures.post.media).toEqual([]);
+    });
+  });
+
+  describe('getMediaPreview', () => {
+    it('should resolve READY video through the post connected account', async () => {
+      const { service, mocks, fixtures } = makeService();
+      fixtures.post.media = [
+        {
+          id: 'media-1',
+          linkedinUrn: 'urn:li:video:1',
+          type: 'VIDEO',
+          status: 'READY',
+        },
+      ];
+
+      const result = await service.getMediaPreview(
+        { _id: fixtures.userId } as any,
+        fixtures.postId.toString(),
+        'media-1',
+      );
+
+      expect(mocks.getMediaDetails).toHaveBeenCalledWith(
+        'VIDEO',
+        'urn:li:video:1',
+        'token',
+      );
+      expect(result.downloadUrl).toBe('https://media.linkedin.test/file');
     });
   });
 });

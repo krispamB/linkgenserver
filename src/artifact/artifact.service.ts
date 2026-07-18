@@ -11,6 +11,8 @@ import {
   Artifact,
   ArtifactType,
   CarouselTheme,
+  Post,
+  PostStatus,
   VersionStatus,
 } from 'src/database/schemas';
 import { getSignedUrl } from '../s3';
@@ -140,6 +142,7 @@ type TimestampedArtifact = Artifact & ArtifactTimestampFields;
 export class ArtifactService implements ArtifactWriter {
   constructor(
     @InjectModel(Artifact.name) private readonly artifactModel: Model<Artifact>,
+    @InjectModel(Post.name) private readonly postModel: Model<Post>,
   ) {}
 
   async createArtifact(
@@ -523,6 +526,21 @@ export class ArtifactService implements ArtifactWriter {
       );
     }
 
+    const pinned = await this.postModel.exists({
+      artifacts: {
+        $elemMatch: {
+          artifact: artifact._id,
+          version: current.version,
+        },
+      },
+      status: { $in: [PostStatus.SCHEDULED, PostStatus.PUBLISHED] },
+    });
+    if (pinned) {
+      throw new ConflictException(
+        `Artifact ${artifactId} version ${current.version} is pinned by a scheduled or published post`,
+      );
+    }
+
     const contentPatch = this.contentPatch(input);
     let parsedContent: ArtifactContent;
     try {
@@ -551,6 +569,11 @@ export class ArtifactService implements ArtifactWriter {
         user: ownerId,
         deletedAt: { $exists: false },
         currentVersion: artifact.currentVersion,
+        ...(artifact.pinRevision
+          ? { pinRevision: artifact.pinRevision }
+          : {
+              $or: [{ pinRevision: 0 }, { pinRevision: { $exists: false } }],
+            }),
         versions: {
           $elemMatch: {
             version: current.version,

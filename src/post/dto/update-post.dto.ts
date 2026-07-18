@@ -1,6 +1,6 @@
 import { IsInt, IsMongoId, IsOptional, IsPositive } from 'class-validator';
 
-export class CreatePostDto {
+export class UpdatePostDto {
   @IsMongoId()
   artifactId: string;
 
@@ -8,7 +8,4 @@ export class CreatePostDto {
   @IsInt()
   @IsPositive()
   version?: number;
-
-  @IsMongoId()
-  connectedAccount: string;
 }

@@ -24,6 +24,7 @@ jest.mock(
   () => ({
     User: class User {},
     PostStatus: {
+      DRAFT: 'DRAFT',
       SCHEDULED: 'SCHEDULED',
       PUBLISHED: 'PUBLISHED',
       FAILED: 'FAILED',
@@ -145,6 +146,57 @@ describe('PostController', () => {
         dto,
       );
       expect(response.data).toBe(post);
+    });
+  });
+
+  describe('media composition', () => {
+    it('should initiate upload slots for an owned draft', async () => {
+      const data = { uploads: [{ mediaId: 'media-1' }] };
+      const postService = {
+        initiateMediaUpload: jest.fn().mockResolvedValue(data),
+      } as any;
+      const controller = new PostController(postService);
+      const user = { _id: 'user-1' } as any;
+      const dto = {
+        files: [
+          { fileName: 'launch.jpg', mimeType: 'image/jpeg', sizeBytes: 10 },
+        ],
+      };
+
+      const response = await controller.initiateMediaUpload(
+        user,
+        'post-1',
+        dto,
+      );
+
+      expect(postService.initiateMediaUpload).toHaveBeenCalledWith(
+        user,
+        'post-1',
+        dto,
+      );
+      expect(response.data).toBe(data);
+    });
+
+    it('should resolve a media preview through the post', async () => {
+      const data = { downloadUrl: 'https://media.test/file' };
+      const postService = {
+        getMediaPreview: jest.fn().mockResolvedValue(data),
+      } as any;
+      const controller = new PostController(postService);
+      const user = { _id: 'user-1' } as any;
+
+      const response = await controller.getMediaPreview(
+        user,
+        'post-1',
+        'media-1',
+      );
+
+      expect(postService.getMediaPreview).toHaveBeenCalledWith(
+        user,
+        'post-1',
+        'media-1',
+      );
+      expect(response.data).toBe(data);
     });
   });
 });

@@ -5,17 +5,12 @@ import {
   MEDIA_UPLOAD_JOB_NAME,
   MEDIA_UPLOAD_QUEUE_NAME,
 } from './workflow.constants';
+import { PostMediaType } from '../database/schemas';
 
 export interface MediaUploadJobItem {
   mediaId: string;
   r2Key: string;
-  mediaType: MediaType.IMAGE | MediaType.VIDEO;
-}
-
-export enum MediaType {
-  IMAGE = 'IMAGE',
-  VIDEO = 'VIDEO',
-  DOCUMENT = 'DOCUMENT',
+  mediaType: PostMediaType;
 }
 
 export interface MediaUploadJobData {

@@ -2,6 +2,8 @@ jest.mock(
   'src/database/schemas',
   () => ({
     Artifact: { name: 'Artifact' },
+    Post: { name: 'Post' },
+    PostStatus: { SCHEDULED: 'SCHEDULED', PUBLISHED: 'PUBLISHED' },
     ArtifactType: { POST: 'POST', POLL: 'POLL', DOCUMENT: 'DOCUMENT' },
     VersionStatus: {
       GENERATING: 'GENERATING',
@@ -14,6 +16,15 @@ jest.mock(
       EDITORIAL: 'editorial',
       GRADIENT: 'gradient',
     },
+  }),
+  { virtual: true },
+);
+jest.mock(
+  '../s3',
+  () => ({
+    getSignedUrl: jest
+      .fn()
+      .mockResolvedValue('https://signed.example/document.pdf'),
   }),
   { virtual: true },
 );
@@ -35,7 +46,8 @@ const makeService = () => {
     findById: jest.fn(),
     updateOne: jest.fn().mockResolvedValue({ matchedCount: 1 }),
   };
-  const service = new ArtifactService(artifactModel as any);
+  const postModel = { exists: jest.fn().mockResolvedValue(false) };
+  const service = new ArtifactService(artifactModel as any, postModel as any);
 
   const userId = new Types.ObjectId().toString();
   const artifactId = new Types.ObjectId().toString();
@@ -48,7 +60,7 @@ const makeService = () => {
       withResearch: false,
     },
   };
-  return { service, mocks: { artifactModel }, fixtures };
+  return { service, mocks: { artifactModel, postModel }, fixtures };
 };
 
 let service: ArtifactService;

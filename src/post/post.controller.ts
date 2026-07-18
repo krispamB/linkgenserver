@@ -6,16 +6,23 @@ import {
   HttpCode,
   HttpStatus,
   Param,
+  Patch,
   Post,
   Query,
   UseGuards,
+  UsePipes,
+  ValidationPipe,
 } from '@nestjs/common';
 import { PostService } from './post.service';
 import {
   ComparePostsQueryDto,
+  CompleteMediaUploadDto,
+  InitiateMediaUploadDto,
   SchedulePostDto,
   CreatePostDto,
   GetPostsQueryDto,
+  UpdatePostDto,
+  UpdateMediaDto,
 } from './dto';
 import { SubscriptionAccessGuard } from '../common/guards';
 import { ClerkAuthGuard } from '../auth/clerk';
@@ -31,6 +38,13 @@ export class PostController {
 
   @HttpCode(HttpStatus.CREATED)
   @UseGuards(SubscriptionAccessGuard)
+  @UsePipes(
+    new ValidationPipe({
+      transform: true,
+      whitelist: true,
+      forbidNonWhitelisted: true,
+    }),
+  )
   @Post()
   async createPost(
     @GetUser() user: User,
@@ -40,6 +54,115 @@ export class PostController {
       statusCode: HttpStatus.CREATED,
       message: 'Post created successfully',
       data: await this.postService.createPost(user, dto),
+    };
+  }
+
+  @Patch(':id')
+  @UsePipes(
+    new ValidationPipe({
+      transform: true,
+      whitelist: true,
+      forbidNonWhitelisted: true,
+    }),
+  )
+  async updatePost(
+    @GetUser() user: User,
+    @Param('id') id: string,
+    @Body() dto: UpdatePostDto,
+  ): Promise<IAppResponse> {
+    return {
+      statusCode: HttpStatus.OK,
+      message: 'Post updated successfully',
+      data: await this.postService.updatePost(user, id, dto),
+    };
+  }
+
+  @HttpCode(HttpStatus.CREATED)
+  @Post(':id/media/uploads')
+  @UsePipes(
+    new ValidationPipe({
+      transform: true,
+      whitelist: true,
+      forbidNonWhitelisted: true,
+    }),
+  )
+  async initiateMediaUpload(
+    @GetUser() user: User,
+    @Param('id') id: string,
+    @Body() dto: InitiateMediaUploadDto,
+  ): Promise<IAppResponse> {
+    return {
+      statusCode: HttpStatus.CREATED,
+      message: 'Upload slots created',
+      data: await this.postService.initiateMediaUpload(user, id, dto),
+    };
+  }
+
+  @HttpCode(HttpStatus.ACCEPTED)
+  @Post(':id/media/uploads/complete')
+  @UsePipes(
+    new ValidationPipe({
+      transform: true,
+      whitelist: true,
+      forbidNonWhitelisted: true,
+    }),
+  )
+  async completeMediaUpload(
+    @GetUser() user: User,
+    @Param('id') id: string,
+    @Body() dto: CompleteMediaUploadDto,
+  ): Promise<IAppResponse> {
+    return {
+      statusCode: HttpStatus.ACCEPTED,
+      message: 'Media upload started',
+      data: await this.postService.completeMediaUpload(user, id, dto),
+    };
+  }
+
+  @Patch(':postId/media/:mediaId')
+  @UsePipes(
+    new ValidationPipe({
+      transform: true,
+      whitelist: true,
+      forbidNonWhitelisted: true,
+    }),
+  )
+  async updateMedia(
+    @GetUser() user: User,
+    @Param('postId') postId: string,
+    @Param('mediaId') mediaId: string,
+    @Body() dto: UpdateMediaDto,
+  ): Promise<IAppResponse> {
+    return {
+      statusCode: HttpStatus.OK,
+      message: 'Post media updated successfully',
+      data: await this.postService.updateMedia(user, postId, mediaId, dto),
+    };
+  }
+
+  @Delete(':postId/media/:mediaId')
+  async removeMedia(
+    @GetUser() user: User,
+    @Param('postId') postId: string,
+    @Param('mediaId') mediaId: string,
+  ): Promise<IAppResponse> {
+    return {
+      statusCode: HttpStatus.OK,
+      message: 'Post media removed successfully',
+      data: await this.postService.removeMedia(user, postId, mediaId),
+    };
+  }
+
+  @Get(':postId/media/:mediaId/preview')
+  async getMediaPreview(
+    @GetUser() user: User,
+    @Param('postId') postId: string,
+    @Param('mediaId') mediaId: string,
+  ): Promise<IAppResponse> {
+    return {
+      statusCode: HttpStatus.OK,
+      message: 'Post media preview retrieved successfully',
+      data: await this.postService.getMediaPreview(user, postId, mediaId),
     };
   }
 
@@ -67,6 +190,19 @@ export class PostController {
       statusCode: HttpStatus.OK,
       message: 'Post scheduled successfully',
       data: await this.postService.schedulePost(user, id, dto),
+    };
+  }
+
+  @HttpCode(HttpStatus.OK)
+  @Post(':id/unschedule')
+  async unschedulePost(
+    @GetUser() user: User,
+    @Param('id') id: string,
+  ): Promise<IAppResponse> {
+    return {
+      statusCode: HttpStatus.OK,
+      message: 'Post returned to draft successfully',
+      data: await this.postService.unschedulePost(user, id),
     };
   }
 

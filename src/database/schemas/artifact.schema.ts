@@ -86,6 +86,11 @@ export class Artifact extends Document {
   @Prop({ required: true })
   currentVersion: number;
 
+  // Scheduling/publishing increments this revision so an in-flight editor
+  // cannot mutate a version after it becomes pinned.
+  @Prop({ required: true, default: 0 })
+  pinRevision: number;
+
   @Prop({ type: [ArtifactVersionSchema], default: [] })
   versions: ArtifactVersion[];
 

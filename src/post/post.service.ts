@@ -8,7 +8,19 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { ScheduleQueue } from '../workflow/schedule.queue';
-import { SchedulePostDto, CreatePostDto } from './dto';
+import {
+  MediaUploadQueue,
+  MediaUploadJobItem,
+} from '../workflow/media-upload.queue';
+import {
+  CompleteMediaUploadDto,
+  CreatePostDto,
+  InitiateMediaUploadDto,
+  MAX_MEDIA_FILES_PER_POST,
+  SchedulePostDto,
+  UpdateMediaDto,
+  UpdatePostDto,
+} from './dto';
 import {
   AccountProvider,
   Artifact,
@@ -16,6 +28,9 @@ import {
   ConnectedAccount,
   LinkedinAccountType,
   Post,
+  PostMedia,
+  PostMediaStatus,
+  PostMediaType,
   PostStatus,
   User,
   VersionStatus,
@@ -27,9 +42,10 @@ import { EncryptionService } from 'src/encryption/encryption.service';
 import { IContent, ILinkedInPost } from './post.interface';
 import { formatLinkedinContent } from 'src/common/HelperFn';
 import { FeatureGatingService } from '../feature-gating/feature-gating.service';
-import { getFile } from 'src/s3';
+import { deleteFile, getFile, getSignedUploadUrl, headFile } from 'src/s3';
 import { LinkedinMediaService } from './linkedin-media.service';
 import type { DocumentContent, PollContent } from '../artifact/schemas';
+import { randomUUID } from 'crypto';
 
 interface PostFilters {
   availableMonths: string[];
@@ -54,6 +70,7 @@ export interface ComparePostsResult {
 export class PostService {
   private readonly logger = new Logger(PostService.name);
   private readonly LINKEDIN_API_BASE = 'https://api.linkedin.com/rest';
+  private readonly MEDIA_UPLOAD_SLOT_TTL_MS = 30 * 60 * 1000;
 
   private referenceId(
     reference: User | ConnectedAccount | Types.ObjectId,
@@ -64,6 +81,7 @@ export class PostService {
 
   constructor(
     private readonly scheduleQueue: ScheduleQueue,
+    private readonly mediaUploadQueue: MediaUploadQueue,
     @InjectModel(Post.name)
     private readonly postModel: Model<Post>,
     @InjectModel(Artifact.name)
@@ -76,6 +94,11 @@ export class PostService {
   ) {}
 
   async createPost(user: User, dto: CreatePostDto): Promise<Post> {
+    if ('scheduledAt' in dto) {
+      throw new BadRequestException(
+        'scheduledAt is not accepted when creating a draft',
+      );
+    }
     const artifact = await this.artifactModel.findById(dto.artifactId);
     if (!artifact) throw new NotFoundException('Artifact not found');
     if (this.referenceId(artifact.user) !== user._id.toString()) {
@@ -97,20 +120,10 @@ export class PostService {
     const connectedAccount = await this.getOwnedUsableLinkedinConnectedAccount(
       user._id.toString(),
       dto.connectedAccount,
-      dto.scheduledAt ? 'schedule posts' : 'publish posts',
+      'create post drafts',
     );
     if (connectedAccount.accountType === LinkedinAccountType.ORGANIZATION) {
       await this.featureGatingService.assertCompanyPagesAccess(
-        user._id.toString(),
-      );
-    }
-
-    const scheduledAt = dto.scheduledAt ? new Date(dto.scheduledAt) : undefined;
-    if (scheduledAt && scheduledAt.getTime() <= Date.now()) {
-      throw new BadRequestException('Scheduled time must be in the future');
-    }
-    if (scheduledAt) {
-      await this.featureGatingService.assertScheduledPostQuota(
         user._id.toString(),
       );
     }
@@ -124,25 +137,8 @@ export class PostService {
           version: versionNumber,
         },
       ],
-      status: PostStatus.SCHEDULED,
-      ...(scheduledAt ? { scheduledAt } : {}),
+      status: PostStatus.DRAFT,
     });
-    await post.save();
-
-    if (!scheduledAt) {
-      return this.publishPost(post._id.toString());
-    }
-
-    await this.scheduleQueue.addScheduleJob(
-      post._id.toString(),
-      user._id.toString(),
-      scheduledAt.getTime() - Date.now(),
-    );
-    await this.featureGatingService.incrementScheduledPostUsage(
-      user._id.toString(),
-      post._id.toString(),
-    );
-    post.scheduledPostUsageCounted = true;
     await post.save();
     return post;
   }
@@ -155,6 +151,9 @@ export class PostService {
     }
 
     const source = post.artifacts[0];
+    if (source) {
+      await this.bumpArtifactPinRevision(source.artifact, source.version);
+    }
     const artifact = source
       ? await this.artifactModel.findById(source.artifact)
       : null;
@@ -171,6 +170,7 @@ export class PostService {
       await this.failPost(post, 'source artifact unavailable');
       throw new BadRequestException('source artifact unavailable');
     }
+    await this.assertMediaReadyForPublication(post, artifact.type);
 
     try {
       const connectedAccount =
@@ -184,7 +184,9 @@ export class PostService {
       );
       const author = this.resolveLinkedinAuthorUrn(connectedAccount);
       let content: IContent | undefined;
-      if (artifact.type === ArtifactType.POLL) {
+      if (artifact.type === ArtifactType.POST) {
+        content = this.composeUploadedMedia(post.media);
+      } else if (artifact.type === ArtifactType.POLL) {
         const pollContent = version.content as unknown as PollContent;
         const durationByDays = {
           1: 'ONE_DAY',
@@ -272,6 +274,275 @@ export class PostService {
     }
   }
 
+  async updatePost(
+    user: User,
+    postId: string,
+    dto: UpdatePostDto,
+  ): Promise<Post> {
+    const post = await this.postModel.findById(postId);
+    if (!post) throw new NotFoundException('Post not found');
+    if (this.referenceId(post.user) !== user._id.toString()) {
+      throw new ForbiddenException('You are not authorized to edit this post');
+    }
+    if (post.status !== PostStatus.DRAFT && post.status !== PostStatus.FAILED) {
+      throw new BadRequestException('Post cannot be edited');
+    }
+
+    const artifact = await this.artifactModel.findById(dto.artifactId);
+    if (!artifact) throw new NotFoundException('Artifact not found');
+    if (this.referenceId(artifact.user) !== user._id.toString()) {
+      throw new ForbiddenException(
+        'You are not authorized to attach this artifact',
+      );
+    }
+    const versionNumber = dto.version ?? artifact.currentVersion;
+    const version = artifact.versions.find(
+      (candidate) => candidate.version === versionNumber,
+    );
+    if (!version || version.status !== VersionStatus.READY) {
+      throw new BadRequestException('Artifact version must be READY to attach');
+    }
+    if ((post.media?.length ?? 0) > 0 && artifact.type !== ArtifactType.POST) {
+      throw new BadRequestException(
+        'Uploaded media can only be attached to POST artifacts',
+      );
+    }
+
+    post.artifacts = [
+      {
+        artifact: new Types.ObjectId(dto.artifactId),
+        version: versionNumber,
+      },
+    ];
+    this.returnFailedPostToDraft(post);
+    await post.save();
+    return post;
+  }
+
+  async initiateMediaUpload(
+    user: User,
+    postId: string,
+    dto: InitiateMediaUploadDto,
+  ): Promise<{
+    expiresAt: Date;
+    uploads: Array<{
+      mediaId: string;
+      uploadUrl: string;
+      requiredHeaders: Record<string, string>;
+    }>;
+  }> {
+    const post = await this.getOwnedEditablePost(user, postId);
+    await this.assertPostAcceptsUploadedMedia(post);
+    this.purgeExpiredPendingMedia(post);
+    if (this.hasMediaUploadInProgress(post)) {
+      throw new ConflictException(
+        'A media upload is already in progress for this post',
+      );
+    }
+
+    const incomingType = this.validateMediaFiles(post.media, dto);
+    await this.getOwnedUsableLinkedinConnectedAccount(
+      user._id.toString(),
+      this.referenceId(post.connectedAccount),
+      'upload media',
+    );
+
+    const expiresAt = new Date(Date.now() + this.MEDIA_UPLOAD_SLOT_TTL_MS);
+    const ttlSeconds = Math.floor(this.MEDIA_UPLOAD_SLOT_TTL_MS / 1000);
+    const media: PostMedia[] = [];
+    const uploads: Array<{
+      mediaId: string;
+      uploadUrl: string;
+      requiredHeaders: Record<string, string>;
+    }> = [];
+
+    for (const file of dto.files) {
+      const mediaId = randomUUID();
+      const r2Key = this.mediaR2Key(postId, mediaId);
+      uploads.push({
+        mediaId,
+        uploadUrl: await getSignedUploadUrl(
+          r2Key,
+          file.mimeType,
+          file.sizeBytes,
+          ttlSeconds,
+        ),
+        requiredHeaders: {
+          'Content-Type': file.mimeType,
+          'Content-Length': String(file.sizeBytes),
+        },
+      });
+      media.push({
+        id: mediaId,
+        type: incomingType,
+        title: file.fileName,
+        ...(incomingType === PostMediaType.IMAGE
+          ? { altText: file.fileName }
+          : {}),
+        status: PostMediaStatus.PENDING,
+        mimeType: file.mimeType,
+        sizeBytes: file.sizeBytes,
+        pendingExpiresAt: expiresAt,
+      });
+    }
+
+    post.media = [...(post.media ?? []), ...media];
+    this.returnFailedPostToDraft(post);
+    post.markModified('media');
+    await post.save();
+    return { expiresAt, uploads };
+  }
+
+  async completeMediaUpload(
+    user: User,
+    postId: string,
+    dto: CompleteMediaUploadDto,
+  ): Promise<PostMedia[]> {
+    const post = await this.getOwnedEditablePost(user, postId);
+    await this.assertPostAcceptsUploadedMedia(post);
+    const now = Date.now();
+    const entries = [...new Set(dto.mediaIds)].map((mediaId) => {
+      const entry = post.media.find((candidate) => candidate.id === mediaId);
+      if (!entry) throw new NotFoundException(`Unknown media id: ${mediaId}`);
+      if (entry.status !== PostMediaStatus.PENDING) {
+        throw new ConflictException(
+          `Media ${mediaId} is not awaiting upload confirmation`,
+        );
+      }
+      if (!entry.pendingExpiresAt || entry.pendingExpiresAt.getTime() <= now) {
+        throw new ConflictException(
+          'Upload slot expired. Re-initiate the upload.',
+        );
+      }
+      return entry;
+    });
+
+    const account = await this.getOwnedUsableLinkedinConnectedAccount(
+      user._id.toString(),
+      this.referenceId(post.connectedAccount),
+      'upload media',
+    );
+    const items: MediaUploadJobItem[] = [];
+    for (const entry of entries) {
+      const r2Key = this.mediaR2Key(postId, entry.id);
+      const head = await headFile(r2Key);
+      if (!head) {
+        throw new BadRequestException(
+          `File for media ${entry.id} was not uploaded`,
+        );
+      }
+      if (
+        head.sizeBytes !== entry.sizeBytes ||
+        (head.mimeType && head.mimeType !== entry.mimeType)
+      ) {
+        throw new BadRequestException(
+          `Uploaded file for media ${entry.id} does not match the declared size or type`,
+        );
+      }
+      items.push({
+        mediaId: entry.id,
+        r2Key,
+        mediaType: entry.type,
+      });
+    }
+
+    for (const entry of entries) {
+      entry.status = PostMediaStatus.UPLOADING;
+      entry.pendingExpiresAt = undefined;
+    }
+    this.purgeExpiredPendingMedia(post);
+    this.returnFailedPostToDraft(post);
+    post.markModified('media');
+    await post.save();
+    try {
+      await this.mediaUploadQueue.addMediaUploadJob({
+        postId,
+        connectedAccountId: this.referenceId(post.connectedAccount),
+        ownerUrn: this.resolveLinkedinAuthorUrn(account),
+        items,
+      });
+    } catch (error) {
+      for (const entry of entries) entry.status = PostMediaStatus.FAILED;
+      post.markModified('media');
+      await post.save();
+      throw error;
+    }
+    return entries;
+  }
+
+  async updateMedia(
+    user: User,
+    postId: string,
+    mediaId: string,
+    dto: UpdateMediaDto,
+  ): Promise<PostMedia> {
+    const post = await this.getOwnedEditablePost(user, postId);
+    const media = post.media.find((candidate) => candidate.id === mediaId);
+    if (!media) throw new NotFoundException('Media not found');
+    if (dto.title !== undefined) media.title = dto.title;
+    if (dto.altText !== undefined) {
+      if (media.type !== PostMediaType.IMAGE) {
+        throw new BadRequestException('altText is only supported for images');
+      }
+      media.altText = dto.altText;
+    }
+    this.returnFailedPostToDraft(post);
+    post.markModified('media');
+    await post.save();
+    return media;
+  }
+
+  async removeMedia(
+    user: User,
+    postId: string,
+    mediaId: string,
+  ): Promise<PostMedia[]> {
+    const post = await this.getOwnedEditablePost(user, postId);
+    const media = post.media.find((candidate) => candidate.id === mediaId);
+    if (!media) throw new NotFoundException('Media not found');
+    post.media = post.media.filter((candidate) => candidate.id !== mediaId);
+    this.returnFailedPostToDraft(post);
+    post.markModified('media');
+    await post.save();
+    if (
+      media.status === PostMediaStatus.PENDING ||
+      media.status === PostMediaStatus.UPLOADING
+    ) {
+      await deleteFile(this.mediaR2Key(postId, mediaId)).catch((error) =>
+        this.logger.warn(
+          `Failed to delete R2 object for media ${mediaId}: ${error instanceof Error ? error.message : String(error)}`,
+        ),
+      );
+    }
+    return post.media;
+  }
+
+  async getMediaPreview(
+    user: User,
+    postId: string,
+    mediaId: string,
+  ): Promise<{ downloadUrl: string; downloadUrlExpiresAt?: number }> {
+    const post = await this.getOwnedPost(user, postId);
+    const media = post.media.find((candidate) => candidate.id === mediaId);
+    if (!media) throw new NotFoundException('Media not found');
+    if (media.status !== PostMediaStatus.READY || !media.linkedinUrn) {
+      throw new ConflictException('Media is not ready for preview');
+    }
+    const account = await this.getOwnedUsableLinkedinConnectedAccount(
+      user._id.toString(),
+      this.referenceId(post.connectedAccount),
+      'preview media',
+    );
+    const accessToken = await this.encryptionService.decrypt(
+      account.accessToken!,
+    );
+    return this.linkedinMediaService.getMediaDetails(
+      media.type,
+      media.linkedinUrn,
+      accessToken,
+    );
+  }
+
   private async failPost(post: Post, reason: string): Promise<void> {
     post.status = PostStatus.FAILED;
     post.failureReason = reason;
@@ -287,6 +558,7 @@ export class PostService {
       );
     }
     if (
+      post.status !== PostStatus.DRAFT &&
       post.status !== PostStatus.SCHEDULED &&
       post.status !== PostStatus.FAILED
     ) {
@@ -297,6 +569,35 @@ export class PostService {
     if (scheduledJob) await scheduledJob.remove();
 
     return this.publishPost(postId);
+  }
+
+  async unschedulePost(user: User, postId: string): Promise<Post> {
+    const post = await this.postModel.findById(postId);
+    if (!post) throw new NotFoundException('Post not found');
+    if (this.referenceId(post.user) !== user._id.toString()) {
+      throw new ForbiddenException(
+        'You are not authorized to unschedule this post',
+      );
+    }
+    if (post.status !== PostStatus.SCHEDULED) {
+      throw new BadRequestException('Post is not scheduled');
+    }
+
+    const job = await this.scheduleQueue.queue.getJob(postId);
+    if (job) {
+      try {
+        await job.remove();
+      } catch {
+        throw new ConflictException(
+          'Post is already being published and cannot be unscheduled',
+        );
+      }
+    }
+    post.status = PostStatus.DRAFT;
+    post.scheduledAt = undefined;
+    post.failureReason = undefined;
+    await post.save();
+    return post;
   }
 
   async getPosts(
@@ -527,6 +828,7 @@ export class PostService {
     }
 
     if (
+      post.status !== PostStatus.DRAFT &&
       post.status !== PostStatus.SCHEDULED &&
       post.status !== PostStatus.FAILED
     ) {
@@ -544,6 +846,15 @@ export class PostService {
       this.referenceId(post.connectedAccount),
       'schedule posts',
     );
+    if ((post.media?.length ?? 0) > 0) {
+      const source = post.artifacts[0];
+      const artifact = source
+        ? await this.artifactModel.findById(source.artifact)
+        : null;
+      if (!artifact)
+        throw new BadRequestException('source artifact unavailable');
+      await this.assertMediaReadyForPublication(post, artifact.type);
+    }
 
     const legacyScheduleWasCounted =
       post.scheduledPostUsageCounted === undefined &&
@@ -562,23 +873,53 @@ export class PostService {
       );
     }
 
+    const source = post.artifacts?.[0];
+    if (source) {
+      await this.bumpArtifactPinRevision(source.artifact, source.version);
+    }
+
     const scheduledJob = await this.scheduleQueue.queue.getJob(
       post._id.toString(),
     );
+    const previousScheduledAt = post.scheduledAt
+      ? new Date(post.scheduledAt)
+      : undefined;
     if (scheduledJob) {
       await scheduledJob.remove();
+    }
+
+    try {
+      await this.scheduleQueue.addScheduleJob(
+        post._id.toString(),
+        user._id.toString(),
+        delay,
+      );
+    } catch (error) {
+      if (scheduledJob && previousScheduledAt) {
+        const previousDelay = previousScheduledAt.getTime() - Date.now();
+        if (previousDelay > 0) {
+          try {
+            await this.scheduleQueue.addScheduleJob(
+              post._id.toString(),
+              user._id.toString(),
+              previousDelay,
+            );
+          } catch (restoreError) {
+            post.status = PostStatus.DRAFT;
+            post.scheduledAt = undefined;
+            post.failureReason = 'Previous schedule could not be restored';
+            await post.save();
+            this.logger.error(restoreError);
+          }
+        }
+      }
+      throw error;
     }
 
     post.status = PostStatus.SCHEDULED;
     post.scheduledAt = scheduledDate;
     post.failureReason = undefined;
     await post.save();
-
-    await this.scheduleQueue.addScheduleJob(
-      post._id.toString(),
-      user._id.toString(),
-      delay,
-    );
 
     if (isFirstTimeSchedule) {
       await this.featureGatingService.incrementScheduledPostUsage(
@@ -593,6 +934,13 @@ export class PostService {
     }
 
     return post;
+  }
+
+  private returnFailedPostToDraft(post: Post): void {
+    if (post.status !== PostStatus.FAILED) return;
+    post.status = PostStatus.DRAFT;
+    post.failureReason = undefined;
+    post.scheduledAt = undefined;
   }
 
   async getLinkedinImage(user: User, urn: string) {
@@ -694,6 +1042,180 @@ export class PostService {
       total,
       monthly: metrics,
     };
+  }
+
+  private async getOwnedPost(user: User, postId: string): Promise<Post> {
+    const post = await this.postModel.findById(postId);
+    if (!post) throw new NotFoundException('Post not found');
+    if (this.referenceId(post.user) !== user._id.toString()) {
+      throw new ForbiddenException(
+        'You are not authorized to access this post',
+      );
+    }
+    return post;
+  }
+
+  private async getOwnedEditablePost(
+    user: User,
+    postId: string,
+  ): Promise<Post> {
+    const post = await this.getOwnedPost(user, postId);
+    if (post.status !== PostStatus.DRAFT && post.status !== PostStatus.FAILED) {
+      throw new BadRequestException('Post cannot be edited');
+    }
+    post.media ??= [];
+    return post;
+  }
+
+  private async assertPostAcceptsUploadedMedia(post: Post): Promise<void> {
+    const source = post.artifacts[0];
+    const artifact = source
+      ? await this.artifactModel.findById(source.artifact)
+      : null;
+    if (!artifact || artifact.type !== ArtifactType.POST) {
+      throw new BadRequestException(
+        'Uploaded media can only be attached to POST artifacts',
+      );
+    }
+  }
+
+  private validateMediaFiles(
+    existing: PostMedia[],
+    dto: InitiateMediaUploadDto,
+  ): PostMediaType {
+    const imageMimes = new Set(['image/jpeg', 'image/png']);
+    const images = dto.files.filter((file) => imageMimes.has(file.mimeType));
+    const videos = dto.files.filter((file) => file.mimeType === 'video/mp4');
+    if (images.length + videos.length !== dto.files.length) {
+      const unsupported = dto.files.find(
+        (file) =>
+          !imageMimes.has(file.mimeType) && file.mimeType !== 'video/mp4',
+      );
+      throw new BadRequestException(
+        `Unsupported file type: ${unsupported?.mimeType}`,
+      );
+    }
+    if (images.length > 0 && videos.length > 0) {
+      throw new BadRequestException('Cannot mix images and videos in one post');
+    }
+    if (videos.length > 1) {
+      throw new BadRequestException('Only one video per post is allowed');
+    }
+
+    const existingImages = existing.filter(
+      (media) => media.type === PostMediaType.IMAGE,
+    ).length;
+    const existingVideos = existing.filter(
+      (media) => media.type === PostMediaType.VIDEO,
+    ).length;
+    if (
+      (videos.length > 0 && existingImages > 0) ||
+      (images.length > 0 && existingVideos > 0)
+    ) {
+      throw new BadRequestException('Cannot mix images and videos in one post');
+    }
+    if (videos.length + existingVideos > 1) {
+      throw new BadRequestException('Only one video per post is allowed');
+    }
+    if (images.length + existingImages > MAX_MEDIA_FILES_PER_POST) {
+      throw new BadRequestException(
+        `A post cannot contain more than ${MAX_MEDIA_FILES_PER_POST} images`,
+      );
+    }
+    return videos.length > 0 ? PostMediaType.VIDEO : PostMediaType.IMAGE;
+  }
+
+  private purgeExpiredPendingMedia(post: Post): boolean {
+    const now = Date.now();
+    const before = post.media?.length ?? 0;
+    post.media = (post.media ?? []).filter(
+      (media) =>
+        media.status !== PostMediaStatus.PENDING ||
+        !media.pendingExpiresAt ||
+        media.pendingExpiresAt.getTime() > now,
+    );
+    const changed = post.media.length !== before;
+    if (changed) post.markModified('media');
+    return changed;
+  }
+
+  private hasMediaUploadInProgress(post: Post): boolean {
+    return (post.media ?? []).some(
+      (media) =>
+        media.status === PostMediaStatus.PENDING ||
+        media.status === PostMediaStatus.UPLOADING,
+    );
+  }
+
+  private async assertMediaReadyForPublication(
+    post: Post,
+    artifactType: ArtifactType,
+  ): Promise<void> {
+    if (this.purgeExpiredPendingMedia(post)) await post.save();
+    if ((post.media?.length ?? 0) === 0) return;
+    if (artifactType !== ArtifactType.POST) {
+      throw new BadRequestException(
+        'Uploaded media can only be attached to POST artifacts',
+      );
+    }
+    if (
+      post.media.some(
+        (media) => media.status !== PostMediaStatus.READY || !media.linkedinUrn,
+      )
+    ) {
+      throw new ConflictException(
+        'Media uploads must be resolved before publishing or scheduling',
+      );
+    }
+  }
+
+  private composeUploadedMedia(media: PostMedia[]): IContent | undefined {
+    const images = media.filter((item) => item.type === PostMediaType.IMAGE);
+    const video = media.find((item) => item.type === PostMediaType.VIDEO);
+    if (video?.linkedinUrn) {
+      return {
+        media: { id: video.linkedinUrn, title: video.title },
+      };
+    }
+    if (images.length === 1 && images[0].linkedinUrn) {
+      return {
+        media: {
+          id: images[0].linkedinUrn,
+          title: images[0].title,
+          altText: images[0].altText,
+        },
+      };
+    }
+    if (images.length > 1) {
+      return {
+        multiImage: {
+          images: images.map((item) => ({
+            id: item.linkedinUrn!,
+            altText: item.altText,
+          })),
+        },
+      };
+    }
+    return undefined;
+  }
+
+  private mediaR2Key(postId: string, mediaId: string): string {
+    return `media-uploads/${postId}/${mediaId}`;
+  }
+
+  private async bumpArtifactPinRevision(
+    artifactId: Types.ObjectId,
+    version: number,
+  ): Promise<void> {
+    const result = await this.artifactModel.updateOne(
+      { _id: artifactId, currentVersion: version },
+      { $inc: { pinRevision: 1 } },
+    );
+    if (result.matchedCount === 0) {
+      throw new ConflictException(
+        'Selected artifact version changed before it could be pinned',
+      );
+    }
   }
 
   private async getOwnedLinkedinConnectedAccount(
