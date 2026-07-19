@@ -45,6 +45,7 @@ import { FeatureGatingService } from '../feature-gating/feature-gating.service';
 import { deleteFile, getFile, getSignedUploadUrl, headFile } from 'src/s3';
 import { LinkedinMediaService } from './linkedin-media.service';
 import type { DocumentContent, PollContent } from '../artifact/schemas';
+import { CONTENT_TITLE_MAX_LENGTH } from '../common/constants';
 import { randomUUID } from 'crypto';
 
 interface PostFilters {
@@ -154,6 +155,10 @@ export class PostService {
     const post = new this.postModel({
       user: user._id,
       connectedAccount: new Types.ObjectId(dto.connectedAccount),
+      title:
+        dto.title !== undefined
+          ? this.normalizePostTitle(dto.title)
+          : this.defaultPostTitle(artifact),
       artifacts: [
         {
           artifact: new Types.ObjectId(dto.artifactId),
@@ -311,35 +316,79 @@ export class PostService {
       throw new BadRequestException('Post cannot be edited');
     }
 
-    const artifact = await this.artifactModel.findById(dto.artifactId);
-    if (!artifact) throw new NotFoundException('Artifact not found');
-    if (this.referenceId(artifact.user) !== user._id.toString()) {
-      throw new ForbiddenException(
-        'You are not authorized to attach this artifact',
-      );
+    if (dto.version !== undefined && dto.artifactId === undefined) {
+      throw new BadRequestException('version requires artifactId');
     }
-    const versionNumber = dto.version ?? artifact.currentVersion;
-    const version = artifact.versions.find(
-      (candidate) => candidate.version === versionNumber,
-    );
-    if (!version || version.status !== VersionStatus.READY) {
-      throw new BadRequestException('Artifact version must be READY to attach');
-    }
-    if ((post.media?.length ?? 0) > 0 && artifact.type !== ArtifactType.POST) {
-      throw new BadRequestException(
-        'Uploaded media can only be attached to POST artifacts',
-      );
+    if (dto.title === undefined && dto.artifactId === undefined) {
+      throw new BadRequestException('At least one post field must be provided');
     }
 
-    post.artifacts = [
-      {
-        artifact: new Types.ObjectId(dto.artifactId),
-        version: versionNumber,
-      },
-    ];
+    if (dto.artifactId !== undefined) {
+      const artifact = await this.artifactModel.findById(dto.artifactId);
+      if (!artifact) throw new NotFoundException('Artifact not found');
+      if (this.referenceId(artifact.user) !== user._id.toString()) {
+        throw new ForbiddenException(
+          'You are not authorized to attach this artifact',
+        );
+      }
+      const versionNumber = dto.version ?? artifact.currentVersion;
+      const version = artifact.versions.find(
+        (candidate) => candidate.version === versionNumber,
+      );
+      if (!version || version.status !== VersionStatus.READY) {
+        throw new BadRequestException(
+          'Artifact version must be READY to attach',
+        );
+      }
+      if (
+        (post.media?.length ?? 0) > 0 &&
+        artifact.type !== ArtifactType.POST
+      ) {
+        throw new BadRequestException(
+          'Uploaded media can only be attached to POST artifacts',
+        );
+      }
+
+      post.artifacts = [
+        {
+          artifact: new Types.ObjectId(dto.artifactId),
+          version: versionNumber,
+        },
+      ];
+    }
+
+    if (dto.title !== undefined) {
+      post.title = this.normalizePostTitle(dto.title);
+    }
     this.returnFailedPostToDraft(post);
     await post.save();
     return post;
+  }
+
+  private normalizePostTitle(title: unknown): string {
+    if (typeof title !== 'string') {
+      throw new BadRequestException(
+        `title must be between 1 and ${CONTENT_TITLE_MAX_LENGTH} characters`,
+      );
+    }
+    const normalized = title.trim();
+    if (
+      normalized.length === 0 ||
+      normalized.length > CONTENT_TITLE_MAX_LENGTH
+    ) {
+      throw new BadRequestException(
+        `title must be between 1 and ${CONTENT_TITLE_MAX_LENGTH} characters`,
+      );
+    }
+    return normalized;
+  }
+
+  private defaultPostTitle(artifact: Artifact): string {
+    const artifactTitle = artifact.title?.trim();
+    if (artifactTitle) {
+      return artifactTitle.slice(0, CONTENT_TITLE_MAX_LENGTH);
+    }
+    return artifact.source.prompt.trim().slice(0, CONTENT_TITLE_MAX_LENGTH);
   }
 
   async initiateMediaUpload(

@@ -51,6 +51,7 @@ export interface RunState {
   input: BuildInput;
   research?: ResearchResult;
   refine?: RefineContext;
+  generatedTitle?: string;
   content?: ArtifactContent;
   render?: VersionRender;
 }

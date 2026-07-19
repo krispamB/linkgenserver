@@ -29,6 +29,8 @@ Starts asynchronous initial generation. The server creates version `1` with stat
 
 `theme` controls carousel appearance. `stylePreset` controls writing voice; they are separate fields even though both can be `bold`.
 
+Initial generation also creates a trimmed, descriptive `title` of 1–100 characters. The title is stored as artifact library metadata, outside versioned content, and becomes visible through artifact reads after `run.completed`. Refinements preserve the existing title.
+
 ### Response: `202 Accepted`
 
 ```json
@@ -221,6 +223,8 @@ The endpoint also accepts content fields directly:
 ```
 
 Content is merged recursively with the current content and validated as the complete type-specific shape. For documents, `pdfKey`, `pageCount`, and `pdfUrl` are derived fields; do not edit them.
+
+When supplied, `title` is trimmed and must contain 1–100 characters.
 
 ### Response: `200 OK`
 

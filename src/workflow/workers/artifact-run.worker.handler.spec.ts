@@ -58,7 +58,10 @@ const makeProcessor = () => {
   };
 
   const agent = {
-    generate: jest.fn().mockResolvedValue({ commentary: 'Write more.' }),
+    generate: jest.fn().mockResolvedValue({
+      title: 'Writing more',
+      content: { commentary: 'Write more.' },
+    }),
     research: jest.fn(),
   };
   const artifacts = {
@@ -210,7 +213,7 @@ describe('ArtifactRunProcessor', () => {
         'artifact-1',
         1,
         { commentary: 'Write more.' },
-        undefined,
+        { title: 'Writing more' },
       );
       expect(mocks.runHandle.complete).toHaveBeenCalledTimes(1);
       expect(mocks.artifacts.failVersion).not.toHaveBeenCalled();
@@ -295,12 +298,14 @@ describe('ArtifactRunProcessor', () => {
       });
       mocks.runHandle.getLatestCompletedResearch.mockResolvedValue(undefined);
       mocks.agent.generate.mockResolvedValue({
-        document: {
-          templateId: 'minimal',
-          slides: [
-            { type: 'cover', fields: { title: 'A clearer cover' } },
-            { type: 'content', fields: { heading: 'A', body: 'B' } },
-          ],
+        content: {
+          document: {
+            templateId: 'minimal',
+            slides: [
+              { type: 'cover', fields: { title: 'A clearer cover' } },
+              { type: 'content', fields: { heading: 'A', body: 'B' } },
+            ],
+          },
         },
       });
       stubRenderer.render.mockResolvedValue({
@@ -341,9 +346,11 @@ describe('ArtifactRunProcessor', () => {
           },
         },
         {
-          pdfKey: 'artifacts/artifact-1/2/document.pdf',
-          pageCount: 2,
-          browserless: { durationMs: 30_001, units: 2 },
+          render: {
+            pdfKey: 'artifacts/artifact-1/2/document.pdf',
+            pageCount: 2,
+            browserless: { durationMs: 30_001, units: 2 },
+          },
         },
       );
       expect(mocks.runHandle.recordRenderAttempt).toHaveBeenCalledWith({
@@ -355,9 +362,12 @@ describe('ArtifactRunProcessor', () => {
 
     it('should retain render telemetry but never settle credits when later workflow persistence fails', async () => {
       mocks.agent.generate.mockResolvedValue({
-        document: {
-          templateId: 'minimal',
-          slides: [{ type: 'cover', fields: { title: 'A document' } }],
+        title: 'A document',
+        content: {
+          document: {
+            templateId: 'minimal',
+            slides: [{ type: 'cover', fields: { title: 'A document' } }],
+          },
         },
       });
       stubRenderer.render.mockResolvedValue({
@@ -393,7 +403,10 @@ describe('ArtifactRunProcessor', () => {
           cost: 0.02,
           model: 'test/generation-model',
         });
-        return Promise.resolve({ commentary: 'Write more.' });
+        return Promise.resolve({
+          title: 'Writing more',
+          content: { commentary: 'Write more.' },
+        });
       });
 
       await processor.process(makeJob());

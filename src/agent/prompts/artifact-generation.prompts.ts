@@ -124,14 +124,21 @@ CONSTRAINTS:
  * prompt is asked for, not when this module loads, so importing it never
  * depends on the schema barrel having been fully evaluated.
  */
-export function generationSystemPrompt(type: ArtifactType): string {
+export function generationSystemPrompt(
+  type: ArtifactType,
+  includeTitle: boolean,
+): string {
+  let prompt: string;
   switch (type) {
     case ArtifactType.POST:
-      return GENERATE_POST_SYSTEM_PROMPT;
+      prompt = GENERATE_POST_SYSTEM_PROMPT;
+      break;
     case ArtifactType.POLL:
-      return GENERATE_POLL_SYSTEM_PROMPT;
+      prompt = GENERATE_POLL_SYSTEM_PROMPT;
+      break;
     case ArtifactType.DOCUMENT:
-      return GENERATE_DOCUMENT_SYSTEM_PROMPT;
+      prompt = GENERATE_DOCUMENT_SYSTEM_PROMPT;
+      break;
     default:
       // Exhaustive today; kept as a runtime net for a future ArtifactType. The
       // cast placates the type-narrowed-to-never template check.
@@ -139,6 +146,17 @@ export function generationSystemPrompt(type: ArtifactType): string {
         `No generation prompt implemented for artifact type ${String(type)}`,
       );
   }
+
+  if (!includeTitle) return prompt;
+
+  return `${prompt}
+
+TITLE:
+- Add a top-level "title" string to the JSON object shown above.
+- The title must be a concise, descriptive label for the artifact, between 1
+  and 100 characters after trimming.
+- The title is library metadata, not part of the publishable commentary,
+  poll, or document.`;
 }
 
 /**

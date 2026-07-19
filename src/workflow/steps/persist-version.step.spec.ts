@@ -8,6 +8,7 @@ const makeStep = () => {
 
   const state = {
     input: { artifactId: 'artifact-1', version: 1 },
+    generatedTitle: 'Writing more',
     content: { commentary: 'Write more.' },
   } as unknown as RunState;
 
@@ -32,7 +33,7 @@ describe('persistVersionStep', () => {
       'artifact-1',
       1,
       { commentary: 'Write more.' },
-      undefined,
+      { title: 'Writing more' },
     );
   });
 
@@ -46,7 +47,21 @@ describe('persistVersionStep', () => {
       'artifact-1',
       1,
       { commentary: 'Write more.' },
-      render,
+      { render, title: 'Writing more' },
+    );
+  });
+
+  it('should omit the title when a refinement has not generated one', async () => {
+    mocks.artifacts.setVersionContent.mockResolvedValue(undefined);
+    const state = { ...fixtures.state, generatedTitle: undefined };
+
+    await persistVersionStep(state, ctx);
+
+    expect(mocks.artifacts.setVersionContent).toHaveBeenCalledWith(
+      'artifact-1',
+      1,
+      { commentary: 'Write more.' },
+      {},
     );
   });
 

@@ -22,10 +22,12 @@ import {
   CurrentVersionRead,
   RefineContext,
   VersionRender,
+  VersionWriteOptions,
 } from './artifact-writer.interface';
 import {
   ArtifactContent,
   DocumentContent,
+  artifactTitleSchema,
   parseArtifactContent,
 } from './schemas';
 
@@ -261,7 +263,7 @@ export class ArtifactService implements ArtifactWriter {
     artifactId: string,
     version: number,
     content: ArtifactContent,
-    render?: VersionRender,
+    options: VersionWriteOptions = {},
   ): Promise<void> {
     const artifact = await this.getLiveArtifact(artifactId);
     if (!artifact.versions.some((v) => v.version === version)) {
@@ -272,8 +274,12 @@ export class ArtifactService implements ArtifactWriter {
 
     // For a DOCUMENT, fold RENDER_PDF's derived output onto the slides-only
     // content GENERATE produced; POST/POLL carry no document to fold into.
-    const folded = this.foldRender(artifact.type, content, render);
+    const folded = this.foldRender(artifact.type, content, options.render);
     const parsed = parseArtifactContent(artifact.type, folded);
+    const title =
+      version === 1 && options.title !== undefined
+        ? artifactTitleSchema.parse(options.title)
+        : undefined;
 
     // RENDER_PDF is what gates READY for a document: without a rendered pdfKey the
     // deck has no preview, so this flip would publish a half-built version.
@@ -292,6 +298,7 @@ export class ArtifactService implements ArtifactWriter {
       { _id: artifact._id, 'versions.version': version },
       {
         $set: {
+          ...(title !== undefined ? { title } : {}),
           'versions.$.content': parsed,
           'versions.$.status': VersionStatus.READY,
         },
@@ -567,11 +574,16 @@ export class ArtifactService implements ArtifactWriter {
 
     const contentPatch = this.contentPatch(input);
     let parsedContent: ArtifactContent;
+    let parsedTitle: string | undefined;
     try {
       parsedContent = parseArtifactContent(
         artifact.type,
         this.mergeRecords(current.content, contentPatch),
       );
+      parsedTitle =
+        input.title !== undefined
+          ? artifactTitleSchema.parse(input.title)
+          : undefined;
     } catch (error) {
       throw new BadRequestException(
         error instanceof Error ? error.message : 'Invalid artifact content',
@@ -583,8 +595,8 @@ export class ArtifactService implements ArtifactWriter {
       'versions.$.content': parsedContent,
       'versions.$.editedAt': editedAt,
     };
-    if (input.title !== undefined) {
-      set.title = input.title;
+    if (parsedTitle !== undefined) {
+      set.title = parsedTitle;
     }
 
     const updated = await this.artifactModel.findOneAndUpdate(

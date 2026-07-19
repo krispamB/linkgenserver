@@ -10,6 +10,11 @@ export interface VersionRender {
   browserless: BrowserlessUsage;
 }
 
+export interface VersionWriteOptions {
+  render?: VersionRender;
+  title?: string;
+}
+
 export interface CurrentVersionRead {
   type: ArtifactType;
   version: number;
@@ -28,7 +33,7 @@ export interface ArtifactWriter {
     artifactId: string,
     version: number,
     content: ArtifactContent,
-    render?: VersionRender,
+    options?: VersionWriteOptions,
   ): Promise<void>;
   readCurrent(artifactId: string): Promise<CurrentVersionRead>;
   readRefineInput(artifactId: string, version: number): Promise<RefineContext>;

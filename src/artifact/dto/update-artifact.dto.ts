@@ -1,4 +1,5 @@
-import { IsObject, IsOptional, IsString, MaxLength } from 'class-validator';
+import { IsObject, IsOptional } from 'class-validator';
+import { IsContentTitle } from '../../common/decorators';
 
 /**
  * PATCH accepts a `{ content: ... }` envelope as well as direct content fields.
@@ -8,9 +9,7 @@ import { IsObject, IsOptional, IsString, MaxLength } from 'class-validator';
 export class UpdateArtifactDto {
   [key: string]: unknown;
 
-  @IsOptional()
-  @IsString()
-  @MaxLength(200)
+  @IsContentTitle()
   title?: string;
 
   @IsOptional()

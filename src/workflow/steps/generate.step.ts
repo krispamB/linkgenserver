@@ -18,7 +18,7 @@ export const generateStep: StepHandler = async (state, ctx) => {
   const { type, prompt, stylePreset, theme } = state.input;
 
   try {
-    const content = await ctx.agent.generate(
+    const generated = await ctx.agent.generate(
       {
         type,
         prompt,
@@ -39,7 +39,12 @@ export const generateStep: StepHandler = async (state, ctx) => {
       },
     );
 
-    return { content };
+    return {
+      ...(generated.title !== undefined
+        ? { generatedTitle: generated.title }
+        : {}),
+      content: generated.content,
+    };
   } catch (error: unknown) {
     if (error instanceof ContentValidationError) {
       throw terminal(error.message, error);

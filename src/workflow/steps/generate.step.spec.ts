@@ -49,15 +49,18 @@ beforeEach(() => {
 describe('generateStep', () => {
   it('should patch the content slot with what the agent generated', async () => {
     const content = { commentary: 'Write more.' };
-    mocks.agent.generate.mockResolvedValue(content);
+    mocks.agent.generate.mockResolvedValue({ title: 'Writing more', content });
 
     await expect(generateStep(fixtures.state, ctx)).resolves.toEqual({
+      generatedTitle: 'Writing more',
       content,
     });
   });
 
   it('should pass the research and refine slots through to the agent', async () => {
-    mocks.agent.generate.mockResolvedValue({ commentary: 'ok' });
+    mocks.agent.generate.mockResolvedValue({
+      content: { commentary: 'ok' },
+    });
     const research = { findings: 'findings', sources: [] };
     const refine = {
       priorContent: { commentary: 'old' },
@@ -84,7 +87,7 @@ describe('generateStep', () => {
       (_input: unknown, hooks: AgentHooks) => {
         hooks.onUsage?.(turnUsage({ cost: 0.01 }));
         hooks.onUsage?.(turnUsage({ cost: 0.02 }));
-        return Promise.resolve({ commentary: 'ok' });
+        return Promise.resolve({ content: { commentary: 'ok' } });
       },
     );
 

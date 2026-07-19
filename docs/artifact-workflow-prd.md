@@ -454,6 +454,7 @@ interface RunState {
   input:    BuildInput;                                  // RESOLVE_INPUT
   research?: ResearchResult;                             // RESEARCH, or seeded on REFINE
   refine?:  { priorContent: ArtifactContent; feedback: string };  // RESOLVE_INPUT on REFINE
+  generatedTitle?: string;                               // GENERATE on INITIAL only
   content?: ArtifactContent;                             // GENERATE
   render?:  { pdfKey: string; pageCount: number };       // RENDER_PDF — R1
 }
@@ -575,8 +576,9 @@ them, so absence is a bug, and re-running cannot fix it.
 `step.progress { sourcesFound }`. Tool errors are absorbed in-loop; an LLM transport error
 surfaces as `WorkflowError { retryable }` per `src/llm`'s classification.
 
-**`GENERATE`** — calls `ctx.agent.generate(...)` → `ArtifactContent`, one `complete` call
-with no tools, validated against the §4 Zod union with **one inline repair retry**.
+**`GENERATE`** — calls `ctx.agent.generate(...)` → `{ title?, content }`, one `complete`
+call with no tools, validated against the §4 Zod union with **one inline repair retry**.
+Initial runs require a trimmed 1–100 character title; refine runs produce content only.
 Dispatch on `type`. For DOCUMENT, `templateId` resolution happens **inside this step**: a
 user-supplied `theme` is stamped authoritatively (the model cannot override it); if omitted
 the model picks one and Zod validates it is a real `CarouselTheme` (R4). `slides` is the
@@ -590,8 +592,9 @@ slides.length }`. Emits **no** `step.progress` (R7) and one
 validated the content, so it cannot occur and re-running cannot fix it).
 
 **`PERSIST_VERSION`** — calls `ctx.artifacts.setVersionContent(artifactId, version, content,
-render?)`: writes `content`, folds `render.pdfKey` + `pageCount` into `content.document` for
-documents, and flips `GENERATING → READY`. The run's only durable content write. On
+{ render?, title? })`: writes `content`, stores the initial title at artifact-family level,
+folds `render.pdfKey` + `pageCount` into `content.document` for documents, and flips
+`GENERATING → READY`. The run's only durable content write. On
 `run.completed` the engine calls `meter.commit(runId)` — the **only** real credit debit,
 charged once for the winning attempt. A DB write error is retryable; the write targets the
 fixed `(artifactId, version)`, so a retry overwrites rather than appends.
@@ -707,7 +710,7 @@ thorough" into a failed run that the engine would then retry into the same cap.
 ```ts
 interface AgentRunner {
   research(input: ResearchInput): Promise<ResearchResult>;   // agentic
-  generate(input: GenerateInput): Promise<ArtifactContent>;  // single structured completion
+  generate(input: GenerateInput): Promise<{ title?: string; content: ArtifactContent }>; // single structured completion
 }
 
 interface ResearchInput { prompt: string; type: ArtifactType; stylePreset?: StylePreset }

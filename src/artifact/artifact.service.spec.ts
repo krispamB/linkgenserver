@@ -407,15 +407,53 @@ describe('ArtifactService', () => {
     it('should validate the content and flip the version to READY when the version exists', async () => {
       mocks.artifactModel.findById.mockResolvedValue(generatingArtifact());
 
-      await service.setVersionContent(fixtures.artifactId, 1, {
-        commentary: 'A finished post 🎉',
-      });
+      await service.setVersionContent(
+        fixtures.artifactId,
+        1,
+        {
+          commentary: 'A finished post 🎉',
+        },
+        { title: '  A finished artifact  ' },
+      );
 
       expect(mocks.artifactModel.updateOne).toHaveBeenCalledWith(
         { _id: fixtures.artifactId, 'versions.version': 1 },
         {
           $set: {
+            title: 'A finished artifact',
             'versions.$.content': { commentary: 'A finished post 🎉' },
+            'versions.$.status': VersionStatus.READY,
+          },
+        },
+      );
+    });
+
+    it('should preserve the artifact title when persisting a refinement version', async () => {
+      mocks.artifactModel.findById.mockResolvedValue({
+        ...generatingArtifact(),
+        title: 'Manually edited title',
+        currentVersion: 2,
+        versions: [
+          {
+            version: 2,
+            status: VersionStatus.GENERATING,
+            content: {},
+          },
+        ],
+      });
+
+      await service.setVersionContent(
+        fixtures.artifactId,
+        2,
+        { commentary: 'Refined post' },
+        { title: 'Ignored generated title' },
+      );
+
+      expect(mocks.artifactModel.updateOne).toHaveBeenCalledWith(
+        expect.anything(),
+        {
+          $set: {
+            'versions.$.content': { commentary: 'Refined post' },
             'versions.$.status': VersionStatus.READY,
           },
         },
@@ -440,7 +478,7 @@ describe('ArtifactService', () => {
         fixtures.artifactId,
         1,
         { commentary: 'Plain post' },
-        { pdfKey: 'renders/x.pdf', pageCount: 5 },
+        { render: { pdfKey: 'renders/x.pdf', pageCount: 5 } },
       );
 
       expect(mocks.artifactModel.updateOne).toHaveBeenCalledWith(
@@ -461,7 +499,12 @@ describe('ArtifactService', () => {
         fixtures.artifactId,
         1,
         slidesOnlyDocument(),
-        { pdfKey: 'artifacts/abc/1/document.pdf', pageCount: 2 },
+        {
+          render: {
+            pdfKey: 'artifacts/abc/1/document.pdf',
+            pageCount: 2,
+          },
+        },
       );
 
       expect(mocks.artifactModel.updateOne).toHaveBeenCalledWith(

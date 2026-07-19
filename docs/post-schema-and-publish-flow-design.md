@@ -59,6 +59,7 @@ class Post {
   _id
   user:             ObjectId<User>              // owner, required
   connectedAccount: ObjectId<ConnectedAccount>  // bound HERE (deferred from artifact create, #102 §6)
+  title?:            string                     // independent 1–100 character composer label
   artifacts: [{                                  // ordered refs — v1: length 1 (§0 framing)
     artifact: ObjectId<Artifact>,
     version:  number,                            // PINNED at post creation (§4)
@@ -227,8 +228,8 @@ seam is already there.
 
 | Method | Route | Body / Query | Result |
 |---|---|---|---|
-| POST | `/posts` | `{artifactId, version?, connectedAccount}` | `201 DRAFT` |
-| PATCH | `/posts/:id` | `{artifactId, version?}` | change selection while editable |
+| POST | `/posts` | `{title?, artifactId, version?, connectedAccount}` | `201 DRAFT`; title defaults from artifact metadata/source prompt |
+| PATCH | `/posts/:id` | `{title?, artifactId?, version?}` | partial title/selection edit while editable |
 | POST | `/posts/:id/media/uploads` | file declarations | presigned R2 slots |
 | POST | `/posts/:id/media/uploads/complete` | `{mediaIds}` | enqueue LinkedIn transfer |
 | PATCH/DELETE | `/posts/:postId/media/:mediaId` | metadata / — | edit or remove media |

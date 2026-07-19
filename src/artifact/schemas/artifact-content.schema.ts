@@ -2,11 +2,20 @@ import { z } from 'zod';
 import { ArtifactType, CarouselTheme } from 'src/database/schemas';
 import { slidesSchema } from '../../carousel/schemas';
 import { linkedInCharCount } from '../utils/linkedin-char-count.util';
+import { CONTENT_TITLE_MAX_LENGTH } from '../../common/constants';
 
 export const LINKEDIN_MAX_POST_CHARS = 3000;
 export const LINKEDIN_MAX_POLL_QUESTION_CHARS = 140;
 export const LINKEDIN_MAX_POLL_OPTION_CHARS = 30;
 export const POLL_DURATION_DAYS = [1, 3, 7, 14] as const;
+export const artifactTitleSchema = z
+  .string()
+  .trim()
+  .min(1, 'title must not be empty')
+  .max(
+    CONTENT_TITLE_MAX_LENGTH,
+    `title exceeds ${CONTENT_TITLE_MAX_LENGTH} characters`,
+  );
 
 // The commentary cap is counted the way LinkedIn counts: by UTF-16 code unit,
 // so an astral-plane emoji costs 2. Shared by every arm that carries commentary.

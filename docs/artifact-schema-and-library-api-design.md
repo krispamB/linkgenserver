@@ -77,7 +77,7 @@ Artifact {                          // top-level, user-owned library unit
   user:           ObjectId<User>
   pinRevision:    number            // CAS bumped whenever a version is pinned
   type:           ArtifactType
-  title?:         string            // editable display label for the library
+  title?:         string            // generated on initial completion; editable 1–100 character library label
   source:         { prompt: string; withResearch: boolean; stylePreset?: StylePreset }
   currentVersion: number            // → versions[].version
   versions:       ArtifactVersion[] // ordered, append-only (head is mutable)
@@ -156,6 +156,9 @@ history and muddies what "version" means.
   **enqueues a generation run on the new engine** (#103); responds `202
   {artifactId, runId}`. The client watches progress via SSE (#107) and/or polls
   `GET /artifacts/:id`.
+- Initial `GENERATE` returns a trimmed 1–100 character title alongside content;
+  `PERSIST_VERSION` stores it at family level when version 1 becomes `READY`.
+  Refinements never replace the family title.
 - **Input:** `{ type, prompt, withResearch, stylePreset? }`.
   - `withResearch` is the research/no-research toggle from the #100 resolution — this
     is exactly where `quickPostLinkedin`/`insightPostLinkedin` collapse into one flow

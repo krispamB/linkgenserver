@@ -64,6 +64,7 @@ jest.mock(
   { virtual: true },
 );
 import { PostService } from './post.service';
+import type { User } from 'src/database/schemas';
 import { deleteFile, getFile, getSignedUploadUrl, headFile } from 'src/s3';
 import { apiFetch } from 'src/common/HelperFn/apiFetch.helper';
 import { formatLinkedinContent } from 'src/common/HelperFn';
@@ -753,6 +754,8 @@ describe('PostService artifact publishing', () => {
       _id: artifactId,
       user: userId,
       type: 'POST',
+      title: 'Generated artifact title',
+      source: { prompt: 'A source prompt' },
       currentVersion: 1,
       versions: [
         {
@@ -850,6 +853,7 @@ describe('PostService artifact publishing', () => {
         expect.objectContaining({
           artifacts: [{ artifact: fixtures.artifactId, version: 1 }],
           connectedAccount: fixtures.accountId,
+          title: 'Generated artifact title',
           status: 'DRAFT',
         }),
       );
@@ -858,6 +862,35 @@ describe('PostService artifact publishing', () => {
       expect(mocks.addScheduleJob).not.toHaveBeenCalled();
       expect(mocks.assertScheduledPostQuota).not.toHaveBeenCalled();
       expect(mocks.incrementScheduledPostUsage).not.toHaveBeenCalled();
+    });
+
+    it('should normalize and store the title when it is explicitly supplied', async () => {
+      const { service, mocks, fixtures } = makeService();
+
+      await service.createPost({ _id: fixtures.userId } as unknown as User, {
+        artifactId: fixtures.artifactId.toString(),
+        connectedAccount: fixtures.accountId.toString(),
+        title: '  My post title  ',
+      });
+
+      expect(mocks.postModel).toHaveBeenCalledWith(
+        expect.objectContaining({ title: 'My post title' }),
+      );
+    });
+
+    it('should fall back to a truncated source prompt when the artifact title is absent', async () => {
+      const { service, mocks, fixtures } = makeService();
+      fixtures.artifact.title = undefined;
+      fixtures.artifact.source.prompt = `  ${'x'.repeat(120)}  `;
+
+      await service.createPost({ _id: fixtures.userId } as unknown as User, {
+        artifactId: fixtures.artifactId.toString(),
+        connectedAccount: fixtures.accountId.toString(),
+      });
+
+      expect(mocks.postModel).toHaveBeenCalledWith(
+        expect.objectContaining({ title: 'x'.repeat(100) }),
+      );
     });
 
     it('should reject a GENERATING artifact version', async () => {
@@ -904,6 +937,7 @@ describe('PostService artifact publishing', () => {
   describe('publishPost', () => {
     it('should publish commentary from the pinned POST version without a content object', async () => {
       const { service, fixtures } = makeService();
+      fixtures.post.title = 'Internal composer title';
 
       await service.publishPost(fixtures.postId.toString());
 
@@ -912,6 +946,7 @@ describe('PostService artifact publishing', () => {
         commentary: 'Approved text',
       });
       expect(JSON.parse(request.body).content).toBeUndefined();
+      expect(JSON.parse(request.body).title).toBeUndefined();
       expect(fixtures.post.status).toBe('PUBLISHED');
     });
 
@@ -1086,6 +1121,74 @@ describe('PostService artifact publishing', () => {
   });
 
   describe('updatePost', () => {
+    it('should update only the title when no replacement artifact is supplied', async () => {
+      const { service, mocks, fixtures } = makeService();
+      fixtures.post.status = 'DRAFT';
+      mocks.findArtifactById.mockClear();
+
+      await service.updatePost(
+        { _id: fixtures.userId } as unknown as User,
+        fixtures.postId.toString(),
+        { title: '  Updated title  ' },
+      );
+
+      expect(fixtures.post.title).toBe('Updated title');
+      expect(mocks.findArtifactById).not.toHaveBeenCalled();
+      expect(fixtures.post.save).toHaveBeenCalledTimes(1);
+    });
+
+    it('should return a FAILED post to DRAFT when only the title changes', async () => {
+      const { service, fixtures } = makeService();
+      fixtures.post.status = 'FAILED';
+      fixtures.post.failureReason = 'LinkedIn rejected the post';
+
+      await service.updatePost(
+        { _id: fixtures.userId } as unknown as User,
+        fixtures.postId.toString(),
+        { title: 'Retry title' },
+      );
+
+      expect(fixtures.post).toMatchObject({
+        status: 'DRAFT',
+        title: 'Retry title',
+      });
+      expect(fixtures.post.failureReason).toBeUndefined();
+    });
+
+    it('should preserve the post title when only the artifact changes', async () => {
+      const { service, fixtures } = makeService();
+      fixtures.post.status = 'DRAFT';
+      fixtures.post.title = 'Composer title';
+
+      await service.updatePost(
+        { _id: fixtures.userId } as unknown as User,
+        fixtures.postId.toString(),
+        { artifactId: fixtures.artifactId.toString() },
+      );
+
+      expect(fixtures.post.title).toBe('Composer title');
+    });
+
+    it('should reject the patch when it is empty or has a version without an artifact', async () => {
+      const { service, fixtures } = makeService();
+      fixtures.post.status = 'DRAFT';
+
+      await expect(
+        service.updatePost(
+          { _id: fixtures.userId } as unknown as User,
+          fixtures.postId.toString(),
+          {},
+        ),
+      ).rejects.toThrow('At least one post field must be provided');
+      await expect(
+        service.updatePost(
+          { _id: fixtures.userId } as unknown as User,
+          fixtures.postId.toString(),
+          { version: 2 },
+        ),
+      ).rejects.toThrow('version requires artifactId');
+    });
+
     it('should replace the selected artifact on an owned DRAFT', async () => {
       const { service, fixtures } = makeService();
       fixtures.post.status = 'DRAFT';

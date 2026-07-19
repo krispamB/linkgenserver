@@ -66,6 +66,11 @@ export interface GenerateInput {
   refine?: { priorContent: ArtifactContent; feedback: string };
 }
 
+export interface ArtifactGenerationResult {
+  title?: string;
+  content: ArtifactContent;
+}
+
 // One LLM turn's usage, tagged with the model that produced it. The step needs
 // the model to fill `UsageDetail`, and Layer 1's `Usage` does not carry it.
 export interface AgentTurnUsage extends Usage {
@@ -87,5 +92,8 @@ export interface AgentHooks {
 // depend on this, not on `AgentRunnerService`.
 export interface AgentRunner {
   research(input: ResearchInput, hooks?: AgentHooks): Promise<ResearchResult>;
-  generate(input: GenerateInput, hooks?: AgentHooks): Promise<ArtifactContent>;
+  generate(
+    input: GenerateInput,
+    hooks?: AgentHooks,
+  ): Promise<ArtifactGenerationResult>;
 }

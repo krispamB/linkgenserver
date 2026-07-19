@@ -12,6 +12,7 @@ Creates a `DRAFT`. It never publishes or schedules.
 
 ```json
 {
+  "title": "Deployment safety launch",
   "artifactId": "665f1a7f8f1e2c3d4a5b6c7d",
   "version": 2,
   "connectedAccount": "665f1a7f8f1e2c3d4a5b6c90"
@@ -20,6 +21,7 @@ Creates a `DRAFT`. It never publishes or schedules.
 
 | Field | Required | Notes |
 |---|---:|---|
+| `title` | no | Trimmed, 1–100 characters. Defaults to the artifact title, then to the source prompt truncated to 100 characters. |
 | `artifactId` | yes | Owned artifact. |
 | `version` | no | Defaults to the current version; must be `READY`. |
 | `connectedAccount` | yes | Owned, active LinkedIn account. It cannot be changed later. |
@@ -30,13 +32,15 @@ The `201` response contains the saved Post with `status: "DRAFT"`, one pinned ar
 
 ### `PATCH /posts/:id`
 
-Changes the selected artifact/version on a `DRAFT` or `FAILED` Post.
+Partially updates the title and/or selected artifact version on a `DRAFT` or `FAILED` Post.
 
 ```json
-{ "artifactId": "665f1a7f8f1e2c3d4a5b6c7d", "version": 3 }
+{ "title": "Safer deployments", "artifactId": "665f1a7f8f1e2c3d4a5b6c7d", "version": 3 }
 ```
 
-The replacement must be owned and READY. A Post with uploaded media can select only a `POST` artifact because LinkedIn cannot combine uploaded media with polls or documents. Editing a `FAILED` Post returns it to `DRAFT` and clears stale failure/schedule fields.
+`title`, `artifactId`, and `version` are optional, but at least `title` or `artifactId` must be supplied. `version` is valid only with `artifactId`. An omitted title remains unchanged when replacing the artifact. Titles are trimmed and must contain 1–100 characters.
+
+The replacement artifact must be owned and READY. A Post with uploaded media can select only a `POST` artifact because LinkedIn cannot combine uploaded media with polls or documents. Editing a `FAILED` Post returns it to `DRAFT` and clears stale failure/schedule fields.
 
 ## Uploaded media
 
@@ -146,7 +150,7 @@ Each artifact reference is populated with the metadata needed to label the Post 
 }
 ```
 
-`title` is optional. For a visible Post title, use a non-empty `artifact.title`; otherwise fall back to `artifact.source.prompt`. Apply any visual truncation on the client.
+The Post itself now carries its display `title`. The nested artifact title remains available as artifact metadata and does not change when the Post title is edited.
 
 ### `GET /posts/:id`
 

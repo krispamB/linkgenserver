@@ -68,6 +68,11 @@ const completion = (text: string, cost = 0.02): CompletionResult => ({
   usage: usage(cost),
 });
 
+const generatedJson = (
+  content: Record<string, unknown>,
+  title = 'Artifact title',
+): string => JSON.stringify({ title, ...content });
+
 const toolTurn = (
   toolCalls: ToolTurnResult['toolCalls'],
   cost = 0.02,
@@ -124,18 +129,45 @@ describe('AgentRunnerService', () => {
   describe('generate', () => {
     it('should return parsed content when the first completion is valid', async () => {
       mocks.llmService.complete.mockResolvedValue(
-        completion('{"commentary":"Write more."}'),
+        completion(
+          '{"title":"Why Staff Engineers Should Write","commentary":"Write more."}',
+        ),
       );
 
       await expect(service.generate(fixtures.input)).resolves.toEqual({
-        commentary: 'Write more.',
+        title: 'Why Staff Engineers Should Write',
+        content: { commentary: 'Write more.' },
       });
       expect(mocks.llmService.complete).toHaveBeenCalledTimes(1);
     });
 
+    it('should trim the generated title when it has surrounding whitespace', async () => {
+      mocks.llmService.complete.mockResolvedValue(
+        completion(generatedJson({ commentary: 'Write more.' }, '  A title  ')),
+      );
+
+      await expect(service.generate(fixtures.input)).resolves.toMatchObject({
+        title: 'A title',
+      });
+    });
+
+    it.each(['   ', 'x'.repeat(101)])(
+      'should repair and fail when the generated title remains invalid',
+      async (title) => {
+        mocks.llmService.complete.mockResolvedValue(
+          completion(generatedJson({ commentary: 'Write more.' }, title)),
+        );
+
+        await expect(service.generate(fixtures.input)).rejects.toBeInstanceOf(
+          ContentValidationError,
+        );
+        expect(mocks.llmService.complete).toHaveBeenCalledTimes(2);
+      },
+    );
+
     it('should call the configured GENERATION_MODEL through the OpenRouter provider', async () => {
       mocks.llmService.complete.mockResolvedValue(
-        completion('{"commentary":"Write more."}'),
+        completion(generatedJson({ commentary: 'Write more.' })),
       );
 
       await service.generate(fixtures.input);
@@ -149,17 +181,20 @@ describe('AgentRunnerService', () => {
 
     it('should strip markdown fences before validating', async () => {
       mocks.llmService.complete.mockResolvedValue(
-        completion('```json\n{"commentary":"Fenced."}\n```'),
+        completion(
+          `\`\`\`json\n${generatedJson({ commentary: 'Fenced.' })}\n\`\`\``,
+        ),
       );
 
       await expect(service.generate(fixtures.input)).resolves.toEqual({
-        commentary: 'Fenced.',
+        title: 'Artifact title',
+        content: { commentary: 'Fenced.' },
       });
     });
 
     it('should inject the style preset instruction as voice when one is supplied', async () => {
       mocks.llmService.complete.mockResolvedValue(
-        completion('{"commentary":"Bold take."}'),
+        completion(generatedJson({ commentary: 'Bold take.' })),
       );
 
       await service.generate({
@@ -174,7 +209,7 @@ describe('AgentRunnerService', () => {
 
     it('should omit the voice section when no style preset is supplied', async () => {
       mocks.llmService.complete.mockResolvedValue(
-        completion('{"commentary":"Plain."}'),
+        completion(generatedJson({ commentary: 'Plain.' })),
       );
 
       await service.generate(fixtures.input);
@@ -186,7 +221,7 @@ describe('AgentRunnerService', () => {
 
     it('should pass research findings and sources into the brief when present', async () => {
       mocks.llmService.complete.mockResolvedValue(
-        completion('{"commentary":"Researched."}'),
+        completion(generatedJson({ commentary: 'Researched.' })),
       );
 
       await service.generate({
@@ -207,7 +242,7 @@ describe('AgentRunnerService', () => {
         completion('{"commentary":"Revised."}'),
       );
 
-      await service.generate({
+      const generated = await service.generate({
         ...fixtures.input,
         refine: {
           priorContent: { commentary: 'The old post.' },
@@ -218,11 +253,13 @@ describe('AgentRunnerService', () => {
       const [, user] = messagesOfCall(1);
       expect(user.content).toContain('The old post.');
       expect(user.content).toContain('Make the hook sharper.');
+      expect(messagesOfCall(1)[0].content).not.toContain('TITLE:');
+      expect(generated).toEqual({ content: { commentary: 'Revised.' } });
     });
 
     it('should report usage per LLM turn, tagged with the model', async () => {
       mocks.llmService.complete.mockResolvedValue(
-        completion('{"commentary":"Write more."}', 0.031),
+        completion(generatedJson({ commentary: 'Write more.' }), 0.031),
       );
       const onUsage = jest.fn();
 
@@ -238,14 +275,41 @@ describe('AgentRunnerService', () => {
       });
     });
 
+    it('should return a title and typed content when initially generating a poll', async () => {
+      mocks.llmService.complete.mockResolvedValue(
+        completion(
+          generatedJson(
+            {
+              poll: {
+                question: 'Which approach works best?',
+                options: ['A', 'B'],
+                durationDays: 7,
+              },
+            },
+            'Choosing an approach',
+          ),
+        ),
+      );
+
+      await expect(
+        service.generate({ ...fixtures.input, type: ArtifactType.POLL }),
+      ).resolves.toMatchObject({
+        title: 'Choosing an approach',
+        content: { poll: { durationDays: 7 } },
+      });
+    });
+
     describe('the inline repair retry', () => {
       it('should re-prompt with the validation error and return the repaired content', async () => {
         mocks.llmService.complete
-          .mockResolvedValueOnce(completion('{"commentary":""}'))
-          .mockResolvedValueOnce(completion('{"commentary":"Repaired."}'));
+          .mockResolvedValueOnce(completion(generatedJson({ commentary: '' })))
+          .mockResolvedValueOnce(
+            completion(generatedJson({ commentary: 'Repaired.' })),
+          );
 
         await expect(service.generate(fixtures.input)).resolves.toEqual({
-          commentary: 'Repaired.',
+          title: 'Artifact title',
+          content: { commentary: 'Repaired.' },
         });
         expect(mocks.llmService.complete).toHaveBeenCalledTimes(2);
 
@@ -253,7 +317,7 @@ describe('AgentRunnerService', () => {
         expect(repair).toHaveLength(4);
         expect(repair[2]).toEqual({
           role: MessageRole.Assistant,
-          content: '{"commentary":""}',
+          content: generatedJson({ commentary: '' }),
         });
         expect(repair[3].role).toBe(MessageRole.User);
         expect(repair[3].content).toContain('commentary must not be empty');
@@ -262,18 +326,23 @@ describe('AgentRunnerService', () => {
       it('should repair a response that is not JSON at all', async () => {
         mocks.llmService.complete
           .mockResolvedValueOnce(completion('I cannot do that.'))
-          .mockResolvedValueOnce(completion('{"commentary":"Fine, here."}'));
+          .mockResolvedValueOnce(
+            completion(generatedJson({ commentary: 'Fine, here.' })),
+          );
 
         await expect(service.generate(fixtures.input)).resolves.toEqual({
-          commentary: 'Fine, here.',
+          title: 'Artifact title',
+          content: { commentary: 'Fine, here.' },
         });
       });
 
       it('should charge usage for the repair turn too', async () => {
         mocks.llmService.complete
-          .mockResolvedValueOnce(completion('{"commentary":""}', 0.01))
           .mockResolvedValueOnce(
-            completion('{"commentary":"Repaired."}', 0.02),
+            completion(generatedJson({ commentary: '' }), 0.01),
+          )
+          .mockResolvedValueOnce(
+            completion(generatedJson({ commentary: 'Repaired.' }), 0.02),
           );
         const onUsage = jest.fn();
 
@@ -288,7 +357,7 @@ describe('AgentRunnerService', () => {
 
       it('should throw ContentValidationError when the repair is also invalid', async () => {
         mocks.llmService.complete.mockResolvedValue(
-          completion('{"commentary":""}'),
+          completion(generatedJson({ commentary: '' })),
         );
 
         await expect(service.generate(fixtures.input)).rejects.toBeInstanceOf(
@@ -334,7 +403,7 @@ describe('AgentRunnerService', () => {
     describe('DOCUMENT generation', () => {
       // A valid slides-only deck the model returns; templateId varies per test.
       const deckJson = (templateId: string) =>
-        JSON.stringify({
+        generatedJson({
           document: {
             templateId,
             slides: [
@@ -354,10 +423,11 @@ describe('AgentRunnerService', () => {
           completion(deckJson('editorial')),
         );
 
-        const content = await service.generate(documentInput);
+        const generated = await service.generate(documentInput);
 
-        expect(content).toMatchObject({
-          document: { templateId: 'editorial' },
+        expect(generated).toMatchObject({
+          title: 'Artifact title',
+          content: { document: { templateId: 'editorial' } },
         });
         expect(mocks.llmService.complete).toHaveBeenCalledTimes(1);
       });
@@ -367,9 +437,11 @@ describe('AgentRunnerService', () => {
           completion(deckJson('gradient')),
         );
 
-        const content = await service.generate(documentInput);
+        const generated = await service.generate(documentInput);
 
-        expect(content).toMatchObject({ document: { templateId: 'gradient' } });
+        expect(generated.content).toMatchObject({
+          document: { templateId: 'gradient' },
+        });
       });
 
       it('should stamp the user-supplied theme over a different one the model picked', async () => {
@@ -378,12 +450,14 @@ describe('AgentRunnerService', () => {
           completion(deckJson('bold')),
         );
 
-        const content = await service.generate({
+        const generated = await service.generate({
           ...documentInput,
           theme: CarouselTheme.MINIMAL,
         });
 
-        expect(content).toMatchObject({ document: { templateId: 'minimal' } });
+        expect(generated.content).toMatchObject({
+          document: { templateId: 'minimal' },
+        });
       });
 
       it('should instruct the model to use the stamped theme in the user prompt', async () => {

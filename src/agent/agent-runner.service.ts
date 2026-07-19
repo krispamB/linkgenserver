@@ -1,7 +1,12 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { ArtifactType } from 'src/database/schemas';
-import { ArtifactContent, contentSchemaFor } from '../artifact/schemas';
+import { z } from 'zod';
+import {
+  ArtifactContent,
+  artifactTitleSchema,
+  contentSchemaFor,
+} from '../artifact/schemas';
 import { LLMProvider, MessageRole } from '../llm/interfaces';
 import type {
   LLMMessage,
@@ -14,6 +19,7 @@ import { ResponseParserService } from '../llm/parsers/responseParser.service';
 import { ContentValidationError } from './agent-runner.error';
 import type {
   AgentHooks,
+  ArtifactGenerationResult,
   AgentRunConfig,
   AgentRunResult,
   AgentRunner,
@@ -275,10 +281,17 @@ export class AgentRunnerService implements AgentRunner {
   async generate(
     input: GenerateInput,
     hooks?: AgentHooks,
-  ): Promise<ArtifactContent> {
-    const schema = contentSchemaFor(input.type);
+  ): Promise<ArtifactGenerationResult> {
+    const includeTitle = input.refine === undefined;
+    const contentSchema = contentSchemaFor(input.type);
+    const schema = includeTitle
+      ? contentSchema.and(z.object({ title: artifactTitleSchema }))
+      : contentSchema;
     const messages: LLMMessage[] = [
-      { role: MessageRole.System, content: generationSystemPrompt(input.type) },
+      {
+        role: MessageRole.System,
+        content: generationSystemPrompt(input.type, includeTitle),
+      },
       { role: MessageRole.User, content: buildGenerationUserPrompt(input) },
     ];
 
@@ -286,7 +299,11 @@ export class AgentRunnerService implements AgentRunner {
 
     let validationError: unknown;
     try {
-      return this.stampTheme(this.parser.parseWithSchema(draft, schema), input);
+      return this.toGenerationResult(
+        this.parser.parseWithSchema(draft, schema),
+        input,
+        includeTitle,
+      );
     } catch (error: unknown) {
       validationError = error;
     }
@@ -308,9 +325,10 @@ export class AgentRunnerService implements AgentRunner {
     );
 
     try {
-      return this.stampTheme(
+      return this.toGenerationResult(
         this.parser.parseWithSchema(repaired, schema),
         input,
+        includeTitle,
       );
     } catch (error: unknown) {
       throw new ContentValidationError(
@@ -318,6 +336,18 @@ export class AgentRunnerService implements AgentRunner {
         { cause: error },
       );
     }
+  }
+
+  private toGenerationResult(
+    parsed: ArtifactContent & { title?: string },
+    input: GenerateInput,
+    includeTitle: boolean,
+  ): ArtifactGenerationResult {
+    const { title, ...content } = parsed;
+    return {
+      ...(includeTitle && title !== undefined ? { title } : {}),
+      content: this.stampTheme(content as ArtifactContent, input),
+    };
   }
 
   /**

@@ -20,12 +20,12 @@ export const persistVersionStep: StepHandler = async (state, ctx) => {
     );
   }
 
-  await ctx.artifacts.setVersionContent(
-    artifactId,
-    version,
-    state.content,
-    state.render,
-  );
+  await ctx.artifacts.setVersionContent(artifactId, version, state.content, {
+    ...(state.render !== undefined ? { render: state.render } : {}),
+    ...(state.generatedTitle !== undefined
+      ? { title: state.generatedTitle }
+      : {}),
+  });
 
   return {};
 };

@@ -23,7 +23,11 @@ jest.mock(
 );
 jest.mock('../s3', () => ({ getSignedUrl: jest.fn() }), { virtual: true });
 
-import { ForbiddenException, ConflictException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+} from '@nestjs/common';
 import { Types } from 'mongoose';
 import { ArtifactType, VersionStatus } from 'src/database/schemas';
 import { getSignedUrl } from '../s3';
@@ -370,6 +374,45 @@ describe('ArtifactService library API', () => {
   });
 
   describe('updateArtifact', () => {
+    it('should normalize the title when it is non-empty and at most 100 characters', async () => {
+      const { service, artifactModel } = makeService();
+      const artifact = readyPost();
+      artifactModel.findById.mockResolvedValue(artifact);
+      artifactModel.findOneAndUpdate.mockResolvedValue({
+        ...artifact,
+        title: 'Renamed artifact',
+      });
+
+      await service.updateArtifact(
+        ids.user.toString(),
+        ids.artifact.toString(),
+        { title: '  Renamed artifact  ' },
+      );
+
+      expect(artifactModel.findOneAndUpdate).toHaveBeenCalledWith(
+        expect.anything(),
+        {
+          $set: expect.objectContaining({ title: 'Renamed artifact' }),
+        },
+        { new: true },
+      );
+    });
+
+    it.each(['   ', 'x'.repeat(101)])(
+      'should reject the title when it is blank or oversized',
+      async (title) => {
+        const { service, artifactModel } = makeService();
+        artifactModel.findById.mockResolvedValue(readyPost());
+
+        await expect(
+          service.updateArtifact(ids.user.toString(), ids.artifact.toString(), {
+            title,
+          }),
+        ).rejects.toBeInstanceOf(BadRequestException);
+        expect(artifactModel.findOneAndUpdate).not.toHaveBeenCalled();
+      },
+    );
+
     it('rejects an in-place edit when the current version is pinned by a scheduled post', async () => {
       const { service, artifactModel, postModel } = makeService();
       artifactModel.findById.mockResolvedValue(readyPost());

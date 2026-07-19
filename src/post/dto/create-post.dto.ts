@@ -1,6 +1,15 @@
-import { IsInt, IsMongoId, IsOptional, IsPositive } from 'class-validator';
+import {
+  IsInt,
+  IsMongoId,
+  IsOptional,
+  IsPositive,
+} from 'class-validator';
+import { IsContentTitle } from '../../common/decorators';
 
 export class CreatePostDto {
+  @IsContentTitle()
+  title?: string;
+
   @IsMongoId()
   artifactId: string;
 

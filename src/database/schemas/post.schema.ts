@@ -2,6 +2,7 @@ import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { Document, Types } from 'mongoose';
 import { ConnectedAccount } from './connected-account.schema';
 import { User } from './user.schema';
+import { CONTENT_TITLE_MAX_LENGTH } from '../../common/constants';
 
 export enum PostStatus {
   DRAFT = 'DRAFT',
@@ -74,6 +75,9 @@ export class Post extends Document {
 
   @Prop({ type: Types.ObjectId, ref: ConnectedAccount.name, required: true })
   connectedAccount: ConnectedAccount | Types.ObjectId;
+
+  @Prop({ trim: true, maxlength: CONTENT_TITLE_MAX_LENGTH })
+  title?: string;
 
   @Prop({ type: [PostArtifactReferenceSchema], required: true })
   artifacts: PostArtifactReference[];
