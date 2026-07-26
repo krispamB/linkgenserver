@@ -45,6 +45,7 @@ import {
 
 const DEFAULT_RESEARCH_MAX_STEPS = 5;
 const DEFAULT_RESEARCH_MAX_SUCCESSFUL_SEARCHES = 5;
+const DEFAULT_MAX_OUTPUT_TOKENS = 8192;
 
 const describeError = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);
@@ -97,6 +98,8 @@ export class AgentRunnerService implements AgentRunner {
   private readonly researchModel: string;
   private readonly researchMaxSteps: number;
   private readonly researchMaxSuccessfulSearches: number;
+  private readonly researchMaxOutputTokens: number;
+  private readonly generationMaxOutputTokens: number;
   private readonly searchWebTool: Tool;
 
   constructor(
@@ -115,6 +118,14 @@ export class AgentRunnerService implements AgentRunner {
         DEFAULT_RESEARCH_MAX_SUCCESSFUL_SEARCHES,
       ),
       DEFAULT_RESEARCH_MAX_SUCCESSFUL_SEARCHES,
+    );
+    this.researchMaxOutputTokens = this.readPositiveInteger(
+      'RESEARCH_MAX_OUTPUT_TOKENS',
+      DEFAULT_MAX_OUTPUT_TOKENS,
+    );
+    this.generationMaxOutputTokens = this.readPositiveInteger(
+      'GENERATION_MAX_OUTPUT_TOKENS',
+      DEFAULT_MAX_OUTPUT_TOKENS,
     );
     this.searchWebTool = createSearchWebTool(
       this.configService.getOrThrow<string>('TAVILY_API_KEY'),
@@ -171,14 +182,8 @@ export class AgentRunnerService implements AgentRunner {
     config: AgentRunConfig,
     hooks?: AgentHooks,
   ): Promise<AgentRunResult> {
-    const {
-      system,
-      messages,
-      tools,
-      maxSteps,
-      maxSuccessfulToolCalls,
-      model,
-    } = config;
+    const { system, messages, tools, maxSteps, maxSuccessfulToolCalls, model } =
+      config;
     // A label for the usage tag; the request itself passes `model` through as-is,
     // letting the strategy fall back to its default when it is undefined.
     const usageModel = model ?? 'default';
@@ -197,7 +202,7 @@ export class AgentRunnerService implements AgentRunner {
         LLMProvider.OPENROUTER,
         conversation,
         toolDefinitions,
-        { model },
+        { model, max_tokens: this.researchMaxOutputTokens },
       );
       addUsage(usage, turn.usage);
       hooks?.onUsage?.({ ...turn.usage, model: usageModel });
@@ -216,9 +221,7 @@ export class AgentRunnerService implements AgentRunner {
       if (maxSuccessfulToolCalls === undefined) {
         toolResults.push(
           ...(await Promise.all(
-            turn.toolCalls.map((call) =>
-              this.executeTool(tools, call, hooks),
-            ),
+            turn.toolCalls.map((call) => this.executeTool(tools, call, hooks)),
           )),
         );
       } else {
@@ -240,11 +243,11 @@ export class AgentRunnerService implements AgentRunner {
             (output) => !isToolError(output),
           ).length;
         }
-        for (const _call of pending) {
-          toolResults.push({
+        toolResults.push(
+          ...pending.map(() => ({
             error: `Successful tool-call limit of ${maxSuccessfulToolCalls} reached`,
-          });
-        }
+          })),
+        );
       }
 
       turn.toolCalls.forEach((call, i) => {
@@ -263,7 +266,7 @@ export class AgentRunnerService implements AgentRunner {
     const final = await this.llmService.complete(
       LLMProvider.OPENROUTER,
       conversation,
-      { model },
+      { model, max_tokens: this.researchMaxOutputTokens },
     );
     addUsage(usage, final.usage);
     hooks?.onUsage?.({ ...final.usage, model: usageModel });
@@ -438,7 +441,10 @@ export class AgentRunnerService implements AgentRunner {
     const { text, usage } = await this.llmService.complete(
       LLMProvider.OPENROUTER,
       messages,
-      { model: this.generationModel },
+      {
+        model: this.generationModel,
+        max_tokens: this.generationMaxOutputTokens,
+      },
     );
 
     hooks?.onUsage?.({ ...usage, model: this.generationModel });
