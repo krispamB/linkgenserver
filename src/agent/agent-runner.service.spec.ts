@@ -154,6 +154,16 @@ const completeWithToolsCalls = (): CompleteWithToolsCall[] =>
 /** The messages passed to `llmService.complete` on its nth (1-based) call. */
 const messagesOfCall = (n: number): LLMMessage[] => completeCalls()[n - 1][1];
 
+const expectGenerationOptions = (
+  options: CompletionOptions | undefined,
+  maxTokens = DEFAULT_MAX_OUTPUT_TOKENS,
+): void => {
+  expect(options?.model).toBe(GENERATION_MODEL);
+  expect(options?.max_tokens).toBe(maxTokens);
+  expect(options?.responseSchema?.name).toBe('artifact_generation');
+  expect(options?.responseSchema?.schema).toBeInstanceOf(z.ZodType);
+};
+
 beforeEach(() => {
   jest.clearAllMocks();
   ({ service, mocks, fixtures } = makeService());
@@ -206,14 +216,9 @@ describe('AgentRunnerService', () => {
 
       await service.generate(fixtures.input);
 
-      expect(mocks.llmService.complete).toHaveBeenCalledWith(
-        LLMProvider.OPENROUTER,
-        expect.any(Array),
-        {
-          model: GENERATION_MODEL,
-          max_tokens: DEFAULT_MAX_OUTPUT_TOKENS,
-        },
-      );
+      const [provider, , options] = completeCalls()[0];
+      expect(provider).toBe(LLMProvider.OPENROUTER);
+      expectGenerationOptions(options);
     });
 
     it('should cap generation with GENERATION_MAX_OUTPUT_TOKENS', async () => {
@@ -226,11 +231,7 @@ describe('AgentRunnerService', () => {
 
       await service.generate(fixtures.input);
 
-      expect(mocks.llmService.complete).toHaveBeenCalledWith(
-        LLMProvider.OPENROUTER,
-        expect.any(Array),
-        { model: GENERATION_MODEL, max_tokens: 4096 },
-      );
+      expectGenerationOptions(completeCalls()[0][2], 4096);
     });
 
     it('should strip markdown fences before validating', async () => {
@@ -309,10 +310,7 @@ describe('AgentRunnerService', () => {
       expect(user.content).toContain('Make the hook sharper.');
       expect(messagesOfCall(1)[0].content).not.toContain('TITLE:');
       expect(generated).toEqual({ content: { commentary: 'Revised.' } });
-      expect(completeCalls()[0][2]).toEqual({
-        model: GENERATION_MODEL,
-        max_tokens: DEFAULT_MAX_OUTPUT_TOKENS,
-      });
+      expectGenerationOptions(completeCalls()[0][2]);
     });
 
     it('should report usage per LLM turn, tagged with the model', async () => {
@@ -370,15 +368,8 @@ describe('AgentRunnerService', () => {
           content: { commentary: 'Repaired.' },
         });
         expect(mocks.llmService.complete).toHaveBeenCalledTimes(2);
-        expect(mocks.llmService.complete).toHaveBeenNthCalledWith(
-          2,
-          LLMProvider.OPENROUTER,
-          expect.any(Array),
-          {
-            model: GENERATION_MODEL,
-            max_tokens: DEFAULT_MAX_OUTPUT_TOKENS,
-          },
-        );
+        expect(completeCalls()[1][0]).toBe(LLMProvider.OPENROUTER);
+        expectGenerationOptions(completeCalls()[1][2]);
 
         const repair = messagesOfCall(2);
         expect(repair).toHaveLength(4);
@@ -499,6 +490,53 @@ describe('AgentRunnerService', () => {
         expect(mocks.llmService.complete).toHaveBeenCalledTimes(1);
       });
 
+      it('should constrain both attempts when repairing over-limit slide copy', async () => {
+        const overLimitDeck = generatedJson({
+          document: {
+            templateId: 'minimal',
+            slides: [
+              { type: 'cover', fields: { title: 'A carousel' } },
+              {
+                type: 'list',
+                fields: {
+                  heading: 'Three ideas',
+                  items: [
+                    'Valid item',
+                    'a'.repeat(81),
+                    'b'.repeat(81),
+                    'c'.repeat(81),
+                  ],
+                },
+              },
+              {
+                type: 'cta',
+                fields: {
+                  headline: 'Keep learning',
+                  action: 'Follow',
+                  handle: 'h'.repeat(41),
+                },
+              },
+            ],
+          },
+        });
+        mocks.llmService.complete
+          .mockResolvedValueOnce(completion(overLimitDeck))
+          .mockResolvedValueOnce(completion(deckJson('minimal')));
+
+        await expect(service.generate(documentInput)).resolves.toMatchObject({
+          content: { document: { templateId: 'minimal' } },
+        });
+
+        expect(mocks.llmService.complete).toHaveBeenCalledTimes(2);
+        for (const [, , options] of completeCalls()) {
+          expectGenerationOptions(options);
+        }
+        const repairPrompt = messagesOfCall(2).at(-1)?.content ?? '';
+        expect(repairPrompt).toContain('maximum');
+        expect(repairPrompt).toContain('80');
+        expect(repairPrompt).toContain('40');
+      });
+
       it('should keep the model-chosen theme when the user supplied none', async () => {
         mocks.llmService.complete.mockResolvedValue(
           completion(deckJson('gradient')),
@@ -508,6 +546,56 @@ describe('AgentRunnerService', () => {
 
         expect(generated.content).toMatchObject({
           document: { templateId: 'gradient' },
+        });
+      });
+
+      it('should remove provider null placeholders from optional document fields', async () => {
+        mocks.llmService.complete.mockResolvedValue(
+          completion(
+            generatedJson({
+              commentary: null,
+              document: {
+                templateId: 'minimal',
+                slides: [
+                  {
+                    type: 'cover',
+                    fields: {
+                      eyebrow: null,
+                      title: 'A carousel',
+                      subtitle: null,
+                    },
+                  },
+                  {
+                    type: 'cta',
+                    fields: {
+                      headline: 'Keep learning',
+                      action: 'Follow',
+                      handle: null,
+                    },
+                  },
+                ],
+              },
+            }),
+          ),
+        );
+
+        await expect(service.generate(documentInput)).resolves.toEqual({
+          title: 'Artifact title',
+          content: {
+            document: {
+              templateId: 'minimal',
+              slides: [
+                { type: 'cover', fields: { title: 'A carousel' } },
+                {
+                  type: 'cta',
+                  fields: {
+                    headline: 'Keep learning',
+                    action: 'Follow',
+                  },
+                },
+              ],
+            },
+          },
         });
       });
 
@@ -1002,10 +1090,7 @@ describe('AgentRunnerService', () => {
           type: ArtifactType.POST,
         });
 
-        expect(completeCalls()[0][2]).toEqual({
-          model: GENERATION_MODEL,
-          max_tokens: DEFAULT_MAX_OUTPUT_TOKENS,
-        });
+        expectGenerationOptions(completeCalls()[0][2]);
         expect(completeWithToolsCalls()[0][3]).toEqual({
           model: RESEARCH_MODEL,
           max_tokens: DEFAULT_MAX_OUTPUT_TOKENS,

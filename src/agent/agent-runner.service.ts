@@ -1,12 +1,8 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { ArtifactType } from 'src/database/schemas';
-import { z } from 'zod';
-import {
-  ArtifactContent,
-  artifactTitleSchema,
-  contentSchemaFor,
-} from '../artifact/schemas';
+import type { ZodType } from 'zod';
+import { ArtifactContent, generationSchemaFor } from '../artifact/schemas';
 import { LLMProvider, MessageRole } from '../llm/interfaces';
 import type {
   LLMMessage,
@@ -286,10 +282,7 @@ export class AgentRunnerService implements AgentRunner {
     hooks?: AgentHooks,
   ): Promise<ArtifactGenerationResult> {
     const includeTitle = input.refine === undefined;
-    const contentSchema = contentSchemaFor(input.type);
-    const schema = includeTitle
-      ? contentSchema.and(z.object({ title: artifactTitleSchema }))
-      : contentSchema;
+    const schema = generationSchemaFor(input.type, includeTitle);
     const messages: LLMMessage[] = [
       {
         role: MessageRole.System,
@@ -298,12 +291,14 @@ export class AgentRunnerService implements AgentRunner {
       { role: MessageRole.User, content: buildGenerationUserPrompt(input) },
     ];
 
-    const draft = await this.complete(messages, hooks);
+    const draft = await this.complete(messages, hooks, schema);
 
     let validationError: unknown;
     try {
       return this.toGenerationResult(
-        this.parser.parseWithSchema(draft, schema),
+        this.parser.parseWithSchema(draft, schema, {
+          stripNullObjectValues: true,
+        }),
         input,
         includeTitle,
       );
@@ -312,7 +307,7 @@ export class AgentRunnerService implements AgentRunner {
     }
 
     this.logger.warn(
-      `Generated ${input.type} content failed validation; repairing: ${describeError(validationError)}`,
+      `Generated ${input.type} first draft failed validation; attempting one repair: ${describeError(validationError)}`,
     );
 
     const repaired = await this.complete(
@@ -325,11 +320,14 @@ export class AgentRunnerService implements AgentRunner {
         },
       ],
       hooks,
+      schema,
     );
 
     try {
       return this.toGenerationResult(
-        this.parser.parseWithSchema(repaired, schema),
+        this.parser.parseWithSchema(repaired, schema, {
+          stripNullObjectValues: true,
+        }),
         input,
         includeTitle,
       );
@@ -437,6 +435,7 @@ export class AgentRunnerService implements AgentRunner {
   private async complete(
     messages: LLMMessage[],
     hooks?: AgentHooks,
+    responseSchema?: ZodType,
   ): Promise<string> {
     const { text, usage } = await this.llmService.complete(
       LLMProvider.OPENROUTER,
@@ -444,6 +443,14 @@ export class AgentRunnerService implements AgentRunner {
       {
         model: this.generationModel,
         max_tokens: this.generationMaxOutputTokens,
+        ...(responseSchema
+          ? {
+              responseSchema: {
+                name: 'artifact_generation',
+                schema: responseSchema,
+              },
+            }
+          : {}),
       },
     );
 
